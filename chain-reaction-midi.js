@@ -5,52 +5,52 @@
 
 'use strict';
 
-const SPESSA_ESM    = 'https://cdn.jsdelivr.net/npm/spessasynth_lib@latest/+esm';
-const WORKLET_URL   = './spessasynth_processor.min.js';
+const SPESSA_ESM = 'https://cdn.jsdelivr.net/npm/spessasynth_lib@latest/+esm';
+const WORKLET_URL = './spessasynth_processor.min.js';
 const SOUNDFONT_URL = './soundfont.sf3';
 
 const PLAYLIST = [
-    { title: 'End of Line',                    artist: 'Daft Punk',               file: './midi/end-of-line.mid' },
-    { title: 'Derezzed',                       artist: 'Daft Punk',               file: './midi/Daft_Punk_-_Derezzed_-_midi_by_tutogamer2a.mid' },
-    { title: 'Last Chance',                    artist: 'Vs. Tabi',                file: './midi/Fnf_-_Vs_Tabi_-_Last_Chance__except_it_s_only_tabi_singing_it_-_midi_by_tutogamer2a.mid' },
-    { title: 'Messenger',                      artist: 'Steins;Gate 0',           file: './midi/Steins_Gate_0_-_Messenger_-_midi_by_tutogamer2a.mid' },
-    { title: 'Septette for the Dead Princess', artist: 'Touhou 6',                file: './midi/Septette For The Dead Princess - Touhou 6 - Midi by tutogamer2a.mid' },
-    { title: 'Re:Awake',                       artist: 'Steins;Gate 0',           file: './midi/Steins;Gate 0 - Re awake - midi by tutogamer2a.mid' },
-    { title: 'The Young Descendant of Tepes',  artist: 'Touhou',                  file: './midi/The Young Descendant of Tepes - touhou font version by tutogamer2a.mid' },
-    { title: 'U.N. Owen Was Her?',             artist: 'Touhou',                  file: './midi/Touhou - U.N Owen was Her - midi by tutogamer2a - Touhou Font - Final Version.mid' },
-    { title: 'The Maid and the Pocket Watch',  artist: 'Touhou 6',                file: './midi/Touhou 06 - The Maid and the Pocket Watch of Blood - WIP.mid' },
-    { title: 'OST 1',                          artist: 'Touhou Luna Nights',      file: './midi/Touhou Luna Night - Ost 1 - WIP.mid' },
-    { title: "Yoshikage Kira's Theme",         artist: "JoJo's Bizarre Adventure",file: "./midi/Yoshikage Kira's Theme - JJBA Diamond is unbreakable - midi by tutogamer2a.mid" },
-    { title: 'Ashes on the Fire',              artist: 'Attack on Titan',         file: './midi/ashes on the fire - snk final season - midi by tutogamer2a.mid' },
-    { title: 'Bloody Tears',                   artist: 'Castlevania',             file: './midi/Castlevania - Bloody Tears.mid' },
-    { title: 'Abyss Watchers',                 artist: 'Dark Souls III',          file: './midi/Dark Souls III - Abyss Watchers OST - midi by tutogamer2a - updated with new instruments.mid' },
-    { title: 'Entrance',                       artist: 'Deemo',                   file: './midi/Deemo - Entrance - midi by tutogamer2a.mid' },
+    { title: 'End of Line', artist: 'Daft Punk', file: './midi/end-of-line.mid' },
+    { title: 'Derezzed', artist: 'Daft Punk', file: './midi/Daft_Punk_-_Derezzed_-_midi_by_tutogamer2a.mid' },
+    { title: 'Last Chance', artist: 'Vs. Tabi', file: './midi/Fnf_-_Vs_Tabi_-_Last_Chance__except_it_s_only_tabi_singing_it_-_midi_by_tutogamer2a.mid' },
+    { title: 'B-Messenger', artist: 'Steins;Gate 0', file: './midi/Steins_Gate_0_-_Messenger_-_midi_by_tutogamer2a.mid' },
+    { title: 'Septette for the Dead Princess', artist: 'Touhou 6', file: './midi/Septette For The Dead Princess - Touhou 6 - Midi by tutogamer2a.mid' },
+    { title: 'Re:Awake', artist: 'Steins;Gate 0', file: './midi/Steins;Gate 0 - Re awake - midi by tutogamer2a.mid' },
+    { title: 'The Young Descendant of Tepes', artist: 'Touhou 6', file: './midi/The Young Descendant of Tepes - touhou font version by tutogamer2a.mid' },
+    { title: 'U.N. Owen Was Her?', artist: 'Touhou 6', file: './midi/Touhou - U.N Owen was Her - midi by tutogamer2a - Touhou Font - Final Version.mid' },
+    { title: 'The Maid and the Pocket Watch of Blood', artist: 'Touhou 6', file: './midi/Touhou 06 - The Maid and the Pocket Watch of Blood - WIP.mid' },
+    { title: 'Lunar Clock ~ Lunar Dial', artist: 'Touhou Luna Nights', file: './midi/Touhou Luna Night - Ost 1 - WIP.mid' },
+    { title: 'Killer', artist: "JoJo's Bizarre Adventure", file: "./midi/Yoshikage Kira's Theme - JJBA Diamond is unbreakable - midi by tutogamer2a.mid" },
+    { title: 'Ashes on the Fire', artist: 'Attack on Titan', file: './midi/ashes on the fire - snk final season - midi by tutogamer2a.mid' },
+    { title: 'Bloody Tears', artist: 'Castlevania', file: './midi/Castlevania - Bloody Tears.mid' },
+    { title: 'Abyss Watchers', artist: 'Dark Souls III', file: './midi/Dark Souls III - Abyss Watchers OST - midi by tutogamer2a - updated with new instruments.mid' },
+    { title: 'Entrance', artist: 'Deemo', file: './midi/Deemo - Entrance - midi by tutogamer2a.mid' },
 ];
 
 /* ── SVG icons ── */
-const SVG_PLAY  = `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg>`;
+const SVG_PLAY = `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg>`;
 const SVG_PAUSE = `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>`;
-const SVG_PREV  = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>`;
-const SVG_NEXT  = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="4" x2="19" y2="20"/></svg>`;
-const SVG_BARS  = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="10" width="4" height="10" rx="1"/><rect x="10" y="5" width="4" height="15" rx="1"/><rect x="18" y="1" width="4" height="19" rx="1"/></svg>`;
+const SVG_PREV = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>`;
+const SVG_NEXT = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="4" x2="19" y2="20"/></svg>`;
+const SVG_BARS = `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="10" width="4" height="10" rx="1"/><rect x="10" y="5" width="4" height="15" rx="1"/><rect x="18" y="1" width="4" height="19" rx="1"/></svg>`;
 
 /* ── State ── */
-let audioCtx      = null;
-let gainNode      = null;
-let synth         = null;
-let seq           = null;
-let isPlaying     = false;
-let isReady       = false;
-let isStarting    = false;
-let isSwitching   = false;
-let volume        = 0.65;
-let currentTrack  = 0;
+let audioCtx = null;
+let gainNode = null;
+let synth = null;
+let seq = null;
+let isPlaying = false;
+let isReady = false;
+let isStarting = false;
+let isSwitching = false;
+let volume = 0.65;
+let currentTrack = 0;
 
-let prefetchedLib    = null;
-let prefetchedSfBuf  = null;
-let midiBufs         = new Array(PLAYLIST.length).fill(null); // per-track buffers
-let prefetchDone     = false;
-let prefetchError    = null;
+let prefetchedLib = null;
+let prefetchedSfBuf = null;
+let midiBufs = new Array(PLAYLIST.length).fill(null); // per-track buffers
+let prefetchDone = false;
+let prefetchError = null;
 
 /* ── Styles ── */
 (function injectStyles() {
@@ -87,7 +87,7 @@ function setIcon(playing) {
 function updateTrackDisplay() {
     const t = PLAYLIST[currentTrack];
     const titleEl = document.getElementById('mp-title');
-    if (titleEl) titleEl.textContent = t.artist + ' · ' + t.title;
+    if (titleEl) titleEl.textContent = t.artist;
 }
 
 /* ── MIDI normalization ── */
@@ -97,7 +97,7 @@ function midiPeakVelocity(buf) {
     const u8 = new Uint8Array(buf);
     let i = 0;
     function read(n) { const v = u8.slice(i, i + n); i += n; return v; }
-    function readU32() { const v = (u8[i]<<24)|(u8[i+1]<<16)|(u8[i+2]<<8)|u8[i+3]; i+=4; return v>>>0; }
+    function readU32() { const v = (u8[i] << 24) | (u8[i + 1] << 16) | (u8[i + 2] << 8) | u8[i + 3]; i += 4; return v >>> 0; }
     function readVarLen() {
         let val = 0;
         for (let k = 0; k < 4; k++) {
@@ -109,14 +109,14 @@ function midiPeakVelocity(buf) {
 
     // Skip "MThd" header
     i = 8; // skip "MThd" + length (always 6)
-    const format = (u8[i]<<8)|u8[i+1]; i+=2;
-    const nTracks = (u8[i]<<8)|u8[i+1]; i+=2;
+    const format = (u8[i] << 8) | u8[i + 1]; i += 2;
+    const nTracks = (u8[i] << 8) | u8[i + 1]; i += 2;
     i += 2; // skip division
 
     let peak = 0;
     for (let t = 0; t < nTracks; t++) {
         if (i + 8 > u8.length) break;
-        const tag = String.fromCharCode(u8[i],u8[i+1],u8[i+2],u8[i+3]); i += 4;
+        const tag = String.fromCharCode(u8[i], u8[i + 1], u8[i + 2], u8[i + 3]); i += 4;
         const chunkLen = readU32();
         const chunkEnd = i + chunkLen;
         if (tag !== 'MTrk') { i = chunkEnd; continue; }
@@ -161,7 +161,7 @@ function midiScaleVelocities(buf, scale) {
     dst.set(src);
     let i = 0;
 
-    function readU32() { const v = (dst[i]<<24)|(dst[i+1]<<16)|(dst[i+2]<<8)|dst[i+3]; i+=4; return v>>>0; }
+    function readU32() { const v = (dst[i] << 24) | (dst[i + 1] << 16) | (dst[i + 2] << 8) | dst[i + 3]; i += 4; return v >>> 0; }
     function readVarLen() {
         let val = 0;
         for (let k = 0; k < 4; k++) {
@@ -172,7 +172,7 @@ function midiScaleVelocities(buf, scale) {
     }
 
     i = 8;
-    const nTracks = (dst[i+2]<<8)|dst[i+3]; i += 6;
+    const nTracks = (dst[i + 2] << 8) | dst[i + 3]; i += 6;
 
     for (let t = 0; t < nTracks; t++) {
         if (i + 8 > dst.length) break;
@@ -301,11 +301,11 @@ async function startAudio() {
 
         await loadTrack(currentTrack, true);
 
-        isReady    = true;
-        isPlaying  = true;
+        isReady = true;
+        isPlaying = true;
         isStarting = false;
         updateTrackDisplay();
-        setStatus(SVG_BARS + PLAYLIST[currentTrack].title, 'playing');
+        setStatus(SVG_BARS + PLAYLIST[currentTrack].title, "playing");
         setIcon(true);
         startSeekTicker();
 
@@ -337,7 +337,7 @@ async function skipTrack(dir) {
     try {
         await loadTrack(currentTrack, true);
         isPlaying = true;
-        setStatus(SVG_BARS + PLAYLIST[currentTrack].title, 'playing');
+        setStatus(SVG_BARS + PLAYLIST[currentTrack].title, "playing");
         setIcon(true);
         // reset seek bar for new track
         const seekEl = document.getElementById('mp-seek');
@@ -346,7 +346,7 @@ async function skipTrack(dir) {
         const elDur = document.getElementById('mp-time-end');
         if (elCur) elCur.textContent = '0:00';
         if (elDur) elDur.textContent = '0:00';
-    } catch(e) {
+    } catch (e) {
         setStatus('ERR: ' + e.message, 'err');
     }
 
@@ -365,7 +365,7 @@ function togglePlay() {
         audioCtx.resume().then(() => {
             seq.play();
             isPlaying = true;
-            setStatus(SVG_BARS + PLAYLIST[currentTrack].title, 'playing');
+            setStatus(SVG_BARS + PLAYLIST[currentTrack].title, "playing");
             setIcon(true);
         });
     }
@@ -426,11 +426,13 @@ function buildWidget() {
     mp.id = 'music-player';
     mp.innerHTML = `
         <div class="mp-top-row">
-            <button id="mp-prev-btn" title="Previous">${SVG_PREV}</button>
-            <button id="mp-play-btn" class="mp-btn" title="Play / Pause">${SVG_PLAY}</button>
-            <button id="mp-next-btn" title="Next">${SVG_NEXT}</button>
+            <div class="mp-controls">
+                <button id="mp-prev-btn" title="Previous">${SVG_PREV}</button>
+                <button id="mp-play-btn" class="mp-btn" title="Play / Pause">${SVG_PLAY}</button>
+                <button id="mp-next-btn" title="Next">${SVG_NEXT}</button>
+            </div>
             <div class="mp-info">
-                <div id="mp-title" class="mp-title">${PLAYLIST[0].artist} · ${PLAYLIST[0].title}</div>
+                <div id="mp-title" class="mp-title">${PLAYLIST[0].artist}</div>
                 <div id="mp-status" class="mp-status">Loading…</div>
             </div>
             <div class="mp-vol-wrap" title="Volume">
@@ -454,7 +456,7 @@ function buildWidget() {
 
     const seekEl = document.getElementById('mp-seek');
     seekEl.style.setProperty('--seek', '0%');
-    seekEl.addEventListener('mousedown',  () => { seekDragging = true; });
+    seekEl.addEventListener('mousedown', () => { seekDragging = true; });
     seekEl.addEventListener('touchstart', () => { seekDragging = true; });
     seekEl.addEventListener('input', () => {
         if (!isReady) return;
@@ -470,7 +472,7 @@ function buildWidget() {
         seq.currentTime = pct * (seq.duration ?? 0);
         seekDragging = false;
     });
-    seekEl.addEventListener('mouseup',  () => { seekDragging = false; });
+    seekEl.addEventListener('mouseup', () => { seekDragging = false; });
     seekEl.addEventListener('touchend', () => { seekDragging = false; });
 
     document.getElementById('mp-play-btn').addEventListener('click', async () => {
@@ -496,12 +498,12 @@ if (document.readyState === 'loading') {
 }
 
 /* ── Move player between setup and game slots ── */
-window.moveMusicPlayer = function(screen) {
+window.moveMusicPlayer = function (screen) {
     const mp = document.getElementById('music-player');
     if (!mp) return;
     const slotId = screen === 'game' ? 'music-player-slot'
-                 : screen === 'online' ? 'music-player-slot-online'
-                 : 'music-player-slot-setup';
+        : screen === 'online' ? 'music-player-slot-online'
+            : 'music-player-slot-setup';
     const slot = document.getElementById(slotId);
     if (slot && mp.parentElement !== slot) slot.appendChild(mp);
 };
