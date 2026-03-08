@@ -57,9 +57,7 @@ let comboHideTimer = null;
    ══════════════════════════════════════════════════════════════════ */
 let firebaseApp = null;
 let db = null;
-let _serverTimeOffset = 0; // ms difference between Firebase server clock and local clock
-
-/* Returns the current time synced to Firebase's server clock */
+let _serverTimeOffset = 0;
 function serverNow() { return Date.now() + _serverTimeOffset; }
 let onlineMode = false;
 let myUid = null;
@@ -84,10 +82,7 @@ function initFirebase() {
     try {
         firebaseApp = firebase.initializeApp(FIREBASE_CONFIG);
         db = firebase.database();
-        // Sync local clock to Firebase server clock so all devices share the same time reference
-        db.ref('/.info/serverTimeOffset').on('value', snap => {
-            _serverTimeOffset = snap.val() || 0;
-        });
+        db.ref('/.info/serverTimeOffset').on('value', snap => { _serverTimeOffset = snap.val() || 0; });
         return true;
     } catch (e) {
         console.error('Firebase init failed:', e);
@@ -521,7 +516,7 @@ async function onlineStartGame() {
 
     history = [];
     initState();
-    S.turnDeadline = serverNow() + TURN_TIMER_MS; // 30s for player 0's first turn
+    // turnDeadline is derived from Firebase server timestamp on deserialize — no local clock needed
 
     // Store player names in room so all clients can read them
     await roomRef.child('config/playerNames').set(PNAMES);
@@ -1020,11 +1015,9 @@ function pulseAmbient(col, intensity) {
 async function pushStateToFirebase() {
     if (!onlineMode || !roomRef) return;
     try {
-        // Set a fresh 30-second deadline for the next player's turn
-        S.turnDeadline = S.over ? null : serverNow() + TURN_TIMER_MS;
+        // turnDeadline is no longer stored — each client derives it from the server-set ts on read
         const serialized = serializeState(S);
         S.moveSeq = serialized.moveSeq; // keep local state in sync
-        lastWrittenStateTs = serialized.ts;
         await roomRef.child('state').set(serialized);
         if (S.over) await roomRef.child('status').set('over');
     } catch (e) {
@@ -1045,14 +1038,16 @@ function serializeState(state) {
         moveSeq: (state.moveSeq || 0) + 1,
         writerUid: myUid,
         move: state.pendingMove || null,
-        turnDeadline: state.turnDeadline || null,
-        ts: serverNow()
+        // ts is set by Firebase server — all clients derive turnDeadline from this
+        ts: firebase.database.ServerValue.TIMESTAMP
     };
 }
 
 function deserializeState(data) {
     // Firebase may coerce arrays to objects with numeric keys — handle both
     const toArr = v => Array.isArray(v) ? v : Object.values(v);
+    // data.ts is set by Firebase's ServerValue.TIMESTAMP — true server time, no clock skew
+    const serverWriteTime = data.ts || serverNow();
     return {
         grid: toArr(data.grid).map(row =>
             toArr(row).map(cell => ({ owner: cell.o, count: cell.c }))),
@@ -1064,7 +1059,7 @@ function deserializeState(data) {
         over: data.over,
         turn: data.turn || 0,
         moveSeq: data.moveSeq || 0,
-        turnDeadline: data.turnDeadline || null
+        turnDeadline: data.over ? null : serverWriteTime + TURN_TIMER_MS
     };
 }
 
