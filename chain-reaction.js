@@ -57,6 +57,10 @@ let comboHideTimer = null;
    ══════════════════════════════════════════════════════════════════ */
 let firebaseApp = null;
 let db = null;
+let _serverTimeOffset = 0; // ms difference between Firebase server clock and local clock
+
+/* Returns the current time synced to Firebase's server clock */
+function serverNow() { return Date.now() + _serverTimeOffset; }
 let onlineMode = false;
 let myUid = null;
 let myPlayerIndex = -1;
@@ -80,6 +84,10 @@ function initFirebase() {
     try {
         firebaseApp = firebase.initializeApp(FIREBASE_CONFIG);
         db = firebase.database();
+        // Sync local clock to Firebase server clock so all devices share the same time reference
+        db.ref('/.info/serverTimeOffset').on('value', snap => {
+            _serverTimeOffset = snap.val() || 0;
+        });
         return true;
     } catch (e) {
         console.error('Firebase init failed:', e);
@@ -513,7 +521,7 @@ async function onlineStartGame() {
 
     history = [];
     initState();
-    S.turnDeadline = Date.now() + TURN_TIMER_MS; // 30s for player 0's first turn
+    S.turnDeadline = serverNow() + TURN_TIMER_MS; // 30s for player 0's first turn
 
     // Store player names in room so all clients can read them
     await roomRef.child('config/playerNames').set(PNAMES);
@@ -905,7 +913,7 @@ function startOnlineTurnTimer() {
     const tick = () => {
         if (!onlineMode || !S || S.over || !S.turnDeadline) { stopOnlineTurnTimer(); return; }
 
-        const remaining = S.turnDeadline - Date.now();
+        const remaining = S.turnDeadline - serverNow();
         const fraction  = Math.max(0, Math.min(1, remaining / TURN_TIMER_MS));
         barEl.style.transform = `scaleX(${fraction})`;
 
@@ -1013,7 +1021,7 @@ async function pushStateToFirebase() {
     if (!onlineMode || !roomRef) return;
     try {
         // Set a fresh 30-second deadline for the next player's turn
-        S.turnDeadline = S.over ? null : Date.now() + TURN_TIMER_MS;
+        S.turnDeadline = S.over ? null : serverNow() + TURN_TIMER_MS;
         const serialized = serializeState(S);
         S.moveSeq = serialized.moveSeq; // keep local state in sync
         lastWrittenStateTs = serialized.ts;
@@ -1038,7 +1046,7 @@ function serializeState(state) {
         writerUid: myUid,
         move: state.pendingMove || null,
         turnDeadline: state.turnDeadline || null,
-        ts: Date.now()
+        ts: serverNow()
     };
 }
 
@@ -1149,8 +1157,7 @@ function buildGridDOM() {
     const g = document.getElementById('grid');
     g.innerHTML = '';
     const maxW = Math.min(window.innerWidth - 24, 720);
-    const vOffset = window.innerWidth <= 480 ? 180 : window.innerWidth <= 700 ? 200 : 230;
-    const maxH = window.innerHeight - vOffset;
+    const maxH = window.innerHeight - 230;
     const szW = Math.floor((maxW - 16 - (cfg.cols - 1) * 2) / cfg.cols);
     const szH = Math.floor((maxH - 16 - (cfg.rows - 1) * 2) / cfg.rows);
     const sz = Math.max(28, Math.min(szW, szH, 68));
