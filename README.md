@@ -153,20 +153,20 @@ Music requires a user interaction before playback begins, in line with browser a
 | End of Line | Daft Punk |
 | Derezzed | Daft Punk |
 | Last Chance | Vs. Tabi (Friday Night Funkin') |
-| Messenger | Steins;Gate 0 |
+| B-Messenger | Steins;Gate 0 |
 | Septette for the Dead Princess | Touhou 6 |
 | Re:Awake | Steins;Gate 0 |
-| The Young Descendant of Tepes | Touhou |
-| U.N. Owen Was Her? | Touhou |
-| The Maid and the Pocket Watch | Touhou 6 |
-| OST 1 | Touhou Luna Nights |
-| Yoshikage Kira's Theme | JoJo's Bizarre Adventure |
+| The Young Descendant of Tepes | Touhou 6 |
+| U.N. Owen Was Her? | Touhou 6 |
+| The Maid and the Pocket Watch of Blood | Touhou 6 |
+| Lunar Clock ~ Lunar Dial | Touhou Luna Nights |
+| Killer | JoJo's Bizarre Adventure |
 | Ashes on the Fire | Attack on Titan |
 | Bloody Tears | Castlevania |
 | Abyss Watchers | Dark Souls III |
 | Entrance | Deemo |
 
-MIDI arrangements by [tutogamer2a](https://onlinesequencer.net/2955883).
+MIDI arrangements by [tutogamer2a](https://onlinesequencer.net/2955883). Soundfont by [mrbumpy409/GeneralUser-GS](https://github.com/mrbumpy409/GeneralUser-GS).
 
 ---
 
