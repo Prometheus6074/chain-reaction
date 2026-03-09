@@ -2110,3 +2110,20 @@ body {
         max-width: 68px;
     }
 }
+/* ── Low Graphics Mode ── */
+#lowgfx-btn.active {
+    border-color: #cc44ff;
+    color: #cc44ff;
+    background: rgba(170, 68, 255, 0.15);
+}
+body.low-gfx #bg-orbs { display: none; }
+body.low-gfx #ambient-layer { display: none; }
+body.low-gfx .orb-ring { animation: none !important; }
+body.low-gfx .orb { animation: none !important; }
+body.low-gfx .cell-glow { box-shadow: none !important; }
+body.low-gfx .near-crit { box-shadow: none !important; animation: none !important; }
+body.low-gfx .ripple { display: none !important; }
+body.low-gfx .fly-orb { display: none !important; }
+body.low-gfx #grid-and-combo { animation: none !important; }
+body.low-gfx .orb { box-shadow: none !important; filter: none !important; }
+body.low-gfx .cell.near-crit .orb { box-shadow: none !important; }

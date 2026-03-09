@@ -985,7 +985,17 @@ function _forceOnlineMove() {
 /* ══════════════════════════════════════════════════════════════════
    SCREEN SHAKE
    ══════════════════════════════════════════════════════════════════ */
+/* Low Graphics Mode */
+let lowGfx = false;
+function toggleLowGfx() {
+    lowGfx = !lowGfx;
+    document.body.classList.toggle('low-gfx', lowGfx);
+    const btn = document.getElementById('lowgfx-btn');
+    if (btn) btn.classList.toggle('active', lowGfx);
+}
+
 function triggerShake(comboStep, unstableCount) {
+    if (lowGfx) return;
     if (comboStep < 3 && unstableCount < 4) return;
     const grid = document.getElementById('grid-and-combo');
     if (!grid) return;
@@ -1002,6 +1012,7 @@ function triggerShake(comboStep, unstableCount) {
    ══════════════════════════════════════════════════════════════════ */
 let _ambientFadeTimer = null;
 function pulseAmbient(col, intensity) {
+    if (lowGfx) return;
     const el = document.getElementById('ambient-layer');
     if (!el) return;
     const alpha = Math.min(0.18, 0.04 + intensity * 0.025);
@@ -1699,6 +1710,7 @@ async function handleClick(r, c) {
    FLYING ORB ANIMATIONS
    ══════════════════════════════════════════════════════════════════ */
 function spawnFlyingOrbs(unstable) {
+    if (lowGfx) return;
     unstable.forEach(([r, c]) => {
         const srcEl = cellEl(r, c); if (!srcEl) return;
         const srcRect = srcEl.getBoundingClientRect();
@@ -1744,10 +1756,12 @@ async function chainReact(session) {
             const el = cellEl(r, c); if (!el) return;
             el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
             const col = PCOLORS[S.grid[r][c].owner];
+            if (!lowGfx) {
             const rip = document.createElement('div');
             rip.className = 'ripple';
             rip.style.cssText = `width:${el.offsetWidth * .45}px;height:${el.offsetWidth * .45}px;background:${col}44;border:1.5px solid ${col};`;
             el.appendChild(rip); setTimeout(() => rip.remove(), 450);
+            }
         });
         if (window.sfxExplode) sfxExplode(unstable.length);
 
