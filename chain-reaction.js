@@ -1545,13 +1545,35 @@ function scheduleAiTurn() {
     if (S.over) return;
     setGridInteractive(false);
     const mySession = gameSession;
-    setTimeout(() => {
+    const aiIdx = S.current;
+    const payload = {
+        grid:       S.grid.map(row => row.map(c => ({ owner: c.owner, count: c.count }))),
+        orbCount:   S.orbCount.slice(),
+        eliminated: S.eliminated.slice(),
+        hasMoved:   S.hasMoved.slice(),
+        aiIdx,
+        isHard:     IS_HARD_AI[aiIdx],
+        rows:       cfg.rows,
+        cols:       cfg.cols
+    };
+    const worker = new Worker('./ai-worker.js');
+    worker.onmessage = (e) => {
+        worker.terminate();
+        if (mySession !== gameSession) return;
+        if (S.over || !IS_AI[S.current]) return;
+        const move = e.data.move;
+        if (move) handleClick(move[0], move[1]);
+        else setGridInteractive(true);
+    };
+    worker.onerror = () => {
+        worker.terminate();
         if (mySession !== gameSession) return;
         if (S.over || !IS_AI[S.current]) return;
         const move = aiPickMove(S.current);
         if (move) handleClick(move[0], move[1]);
         else setGridInteractive(true);
-    }, 350);
+    };
+    worker.postMessage(payload);
 }
 
 /* ══════════════════════════════════════════════════════════════════
