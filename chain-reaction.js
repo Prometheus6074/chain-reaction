@@ -50,6 +50,7 @@ let IS_HARD_AI = [];
 
 let turnOrbsBefore = 0;
 let comboCount = 0;
+let chainCandidates = new Set();
 let comboHideTimer = null;
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1002,7 +1003,6 @@ function triggerShake(comboStep, unstableCount) {
     const big = comboStep >= 6 || unstableCount >= 8;
     const cls = big ? 'shake-lg' : 'shake-sm';
     grid.classList.remove('shake-sm', 'shake-lg');
-    void grid.offsetWidth;
     grid.classList.add(cls);
     setTimeout(() => grid.classList.remove(cls), big ? 320 : 220);
 }
@@ -1212,7 +1212,8 @@ function showCombo(n, col) {
     num.textContent = n;
     num.style.color = col;
     num.style.textShadow = `0 0 18px ${col}99, 0 0 36px ${col}55`;
-    num.classList.remove('bump'); void num.offsetWidth; num.classList.add('bump');
+    num.classList.remove('bump');
+    setTimeout(() => num.classList.add('bump'), 0);
 }
 function hideCombo(instant = false) {
     if (instant) {
@@ -1246,7 +1247,8 @@ function commitGainBadge(playerIdx) {
     const countEl = document.getElementById(`porbs${playerIdx}`);
     if (!badge || !countEl || !badge.classList.contains('visible')) return;
     badge.classList.remove('visible'); badge.classList.add('commit');
-    countEl.classList.remove('pop-count'); void countEl.offsetWidth; countEl.classList.add('pop-count');
+    countEl.classList.remove('pop-count');
+    setTimeout(() => countEl.classList.add('pop-count'), 0);
     setTimeout(() => { badge.classList.remove('commit'); badge.textContent = ''; }, 600);
 }
 
@@ -1279,15 +1281,20 @@ function makeFlyOrbEl(col, sz) {
 /* ══════════════════════════════════════════════════════════════════
    RENDER
    ══════════════════════════════════════════════════════════════════ */
-/* Dirty-cell tracking: only re-render cells that actually changed */
 const dirtyGrid = new Set();
 function markDirty(r, c) { dirtyGrid.add(r * 100 + c); }
 function markAllDirty() { if (!S.grid) return; for (let r = 0; r < cfg.rows; r++) for (let c = 0; c < cfg.cols; c++) dirtyGrid.add(r * 100 + c); }
 
+let _renderCellSz = 0; /* cached for duration of one renderAll pass */
 function renderAll() {
     if (!S.grid) return;
     if (dirtyGrid.size === 0) { renderStrip(); renderBanner(); return; }
+    /* Read cell size once from first available cell, reuse for all others */
+    const anyCellKey = dirtyGrid.values().next().value;
+    const sampleEl = anyCellKey !== undefined ? cellEl((anyCellKey / 100) | 0, anyCellKey % 100) : null;
+    _renderCellSz = (sampleEl && sampleEl.offsetWidth) ? sampleEl.offsetWidth : 0;
     for (const key of dirtyGrid) { const r = (key / 100) | 0, c = key % 100; renderCell(r, c); }
+    _renderCellSz = 0;
     dirtyGrid.clear();
     renderStrip();
     renderBanner();
@@ -1307,7 +1314,7 @@ function renderCell(r, c) {
     const surviving = data.count >= cm ? data.count - cm : data.count;
     if (surviving <= 0) return;
     const col = PCOLORS[data.owner];
-    const cellSz = el.offsetWidth || 40;
+    const cellSz = _renderCellSz || el.offsetWidth || 40;
     const orbSz = Math.max(7, Math.min(Math.floor(cellSz * 0.26), 17));
     const show = Math.min(surviving, 3);
 
@@ -1354,19 +1361,16 @@ function renderStrip() {
         card.classList.toggle('current', i === S.current && !S.over);
         card.classList.toggle('dead', S.eliminated[i]);
         card.classList.toggle('alive', !S.eliminated[i]);
-        // Crown: show on leader(s) with most orbs (only after first moves)
+        // Crown: toggle visibility instead of creating/destroying
         let crownEl = card.querySelector('.pc-crown');
         const isLeader = !S.eliminated[i] && S.orbCount[i] > 0 && S.orbCount[i] === maxOrbs;
-        if (isLeader) {
-            if (!crownEl) {
-                crownEl = document.createElement('span');
-                crownEl.className = 'pc-crown';
-                crownEl.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z"/><path d="M5 21h14"/></svg>`;
-                card.appendChild(crownEl);
-            }
-        } else {
-            if (crownEl) crownEl.remove();
+        if (!crownEl) {
+            crownEl = document.createElement('span');
+            crownEl.className = 'pc-crown';
+            crownEl.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z"/><path d="M5 21h14"/></svg>`;
+            card.appendChild(crownEl);
         }
+        crownEl.style.display = isLeader ? '' : 'none';
     }
 }
 function renderBanner() {
@@ -1615,7 +1619,8 @@ async function playRemoteMove(r, c, finalData) {
     updateGainBadge(S.current, S.orbCount[S.current] - turnOrbsBefore);
 
     const willExplodeImmediately = cell.count >= critMass(r, c);
-    markAllDirty(); renderAll();
+    chainCandidates = new Set(); if (willExplodeImmediately) chainCandidates.add(r * 100 + c);
+    markDirty(r, c); renderAll();
     try {
         if (!willExplodeImmediately) await sessionDelay(60, mySession);
         await chainReact(mySession);
@@ -1667,6 +1672,7 @@ async function handleClick(r, c) {
 
     const willExplodeImmediately = cell.count >= critMass(r, c);
     if (window.sfxPlace && !willExplodeImmediately) sfxPlace();
+    chainCandidates = new Set(); if (willExplodeImmediately) chainCandidates.add(r * 100 + c);
     markDirty(r, c); renderAll();
     try {
         if (!willExplodeImmediately) await sessionDelay(60, mySession);
@@ -1716,6 +1722,9 @@ async function handleClick(r, c) {
    ══════════════════════════════════════════════════════════════════ */
 function spawnFlyingOrbs(unstable) {
     if (lowGfx) return;
+    if (lowGfx) return;
+    // Batch all rect reads first to avoid interleaved layout thrashing
+    const orbData = [];
     unstable.forEach(([r, c]) => {
         const srcEl = cellEl(r, c); if (!srcEl) return;
         const srcRect = srcEl.getBoundingClientRect();
@@ -1725,18 +1734,20 @@ function spawnFlyingOrbs(unstable) {
         neighbors(r, c).forEach(([nr, nc]) => {
             const dstEl = cellEl(nr, nc); if (!dstEl) return;
             const dstRect = dstEl.getBoundingClientRect();
-            const dx = dstRect.left + dstRect.width / 2, dy = dstRect.top + dstRect.height / 2;
-            const fly = makeFlyOrbEl(col, sz);
-            fly.style.left = `${sx}px`; fly.style.top = `${sy}px`;
-            fly.style.transition = `left ${FLY_MS}ms cubic-bezier(.25,.46,.45,.94), top ${FLY_MS}ms cubic-bezier(.25,.46,.45,.94), transform ${FLY_MS}ms`;
-            document.body.appendChild(fly);
-            requestAnimationFrame(() => requestAnimationFrame(() => {
-                fly.style.left = `${dx}px`; fly.style.top = `${dy}px`;
-                fly.style.transform = 'translate(-50%,-50%) scale(1.25)';
-            }));
-
-            setTimeout(() => { fly.style.transform = 'translate(-50%,-50%) scale(0)'; setTimeout(() => fly.remove(), 100); }, FLY_MS);
+            orbData.push({ col, sz, sx, sy, dx: dstRect.left + dstRect.width / 2, dy: dstRect.top + dstRect.height / 2 });
         });
+    });
+    // Now create and animate all DOM nodes in one pass
+    orbData.forEach(({ col, sz, sx, sy, dx, dy }) => {
+        const fly = makeFlyOrbEl(col, sz);
+        fly.style.left = `${sx}px`; fly.style.top = `${sy}px`;
+        fly.style.transition = `left ${FLY_MS}ms cubic-bezier(.25,.46,.45,.94), top ${FLY_MS}ms cubic-bezier(.25,.46,.45,.94), transform ${FLY_MS}ms`;
+        document.body.appendChild(fly);
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            fly.style.left = `${dx}px`; fly.style.top = `${dy}px`;
+            fly.style.transform = 'translate(-50%,-50%) scale(1.25)';
+        }));
+        setTimeout(() => { fly.style.transform = 'translate(-50%,-50%) scale(0)'; setTimeout(() => fly.remove(), 100); }, FLY_MS);
     });
 }
 
@@ -1747,11 +1758,14 @@ async function chainReact(session) {
     while (true) {
         if (S.over) break;
         if (session !== undefined && session !== gameSession) throw new Error('stale');
+        // Use candidate set instead of full grid scan
+        if (!chainCandidates.size) break;
         const unstable = [];
-        for (let r = 0; r < cfg.rows; r++)
-            for (let c = 0; c < cfg.cols; c++)
-                if (S.grid[r][c].count >= critMass(r, c))
-                    unstable.push([r, c]);
+        for (const key of chainCandidates) {
+            const r = (key / 100) | 0, c = key % 100;
+            if (S.grid[r][c].count >= critMass(r, c)) unstable.push([r, c]);
+        }
+        chainCandidates = new Set();
         if (!unstable.length) break;
 
         comboCount++;
@@ -1759,7 +1773,7 @@ async function chainReact(session) {
 
         unstable.forEach(([r, c]) => {
             const el = cellEl(r, c); if (!el) return;
-            el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
+            el.classList.remove('pop'); el.classList.add('pop');
             const col = PCOLORS[S.grid[r][c].owner];
             if (!lowGfx) {
             const rip = document.createElement('div');
@@ -1781,6 +1795,7 @@ async function chainReact(session) {
             const cell = S.grid[r][c], owner = cell.owner, cm = critMass(r, c);
             cell.count -= cm; S.orbCount[owner] -= cm;
             if (cell.count <= 0) { cell.count = 0; cell.owner = -1; }
+            else if (cell.count >= critMass(r, c)) chainCandidates.add(r * 100 + c);
             markDirty(r, c);
             neighbors(r, c).forEach(([nr, nc]) => {
                 const ncell = S.grid[nr][nc];
@@ -1788,8 +1803,9 @@ async function chainReact(session) {
                 else if (ncell.owner === -1) { ncell.owner = owner; }
                 ncell.count++; S.orbCount[owner]++;
                 markDirty(nr, nc);
+                if (ncell.count >= critMass(nr, nc)) chainCandidates.add(nr * 100 + nc);
                 const nel = cellEl(nr, nc);
-                if (nel) { nel.classList.remove('ping'); void nel.offsetWidth; nel.classList.add('ping'); }
+                if (nel) { nel.classList.remove('ping'); nel.classList.add('ping'); }
             });
         });
 

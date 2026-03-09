@@ -1084,6 +1084,7 @@ body {
     height: 0;
     pointer-events: none;
     animation: orbSpin 4s linear infinite;
+    will-change: transform;
 }
 
 @keyframes orbSpin {
@@ -1101,6 +1102,7 @@ body {
     border-radius: 50%;
     pointer-events: none;
     animation: orbWobble 2.4s ease-in-out infinite;
+    will-change: transform;
 }
 
 @keyframes orbCounterSpin {
@@ -1239,19 +1241,9 @@ body {
     pointer-events: none;
     z-index: 9999;
     transform: translate(-50%, -50%);
+    will-change: transform, left, top;
 }
 
-.fly-orb::after {
-    content: '';
-    position: absolute;
-    width: 35%;
-    height: 35%;
-    background: rgba(255, 255, 255, .58);
-    border-radius: 50%;
-    top: 11%;
-    left: 15%;
-    filter: blur(1px);
-}
 
 /* ── BOTTOM BUTTONS ── */
 #music-player-slot {
@@ -2119,11 +2111,10 @@ body {
 body.low-gfx #bg-orbs { display: none; }
 body.low-gfx #ambient-layer { display: none; }
 body.low-gfx .orb-ring { animation: none !important; }
-body.low-gfx .orb { animation: none !important; }
+body.low-gfx .orb { animation: none !important; box-shadow: none !important; filter: none !important; }
+body.low-gfx .cell.near-crit .orb { box-shadow: none !important; }
 body.low-gfx .cell-glow { box-shadow: none !important; }
 body.low-gfx .near-crit { box-shadow: none !important; animation: none !important; }
 body.low-gfx .ripple { display: none !important; }
 body.low-gfx .fly-orb { display: none !important; }
 body.low-gfx #grid-and-combo { animation: none !important; }
-body.low-gfx .orb { box-shadow: none !important; filter: none !important; }
-body.low-gfx .cell.near-crit .orb { box-shadow: none !important; }
