@@ -608,7 +608,7 @@ function handlePlayerDisconnect(playerIndex) {
     const survivors = S.eliminated.map((e, i) => !e ? i : -1).filter(i => i >= 0);
     if (survivors.length === 1) {
         S.over = true;
-        renderAll();
+        markAllDirty(); renderAll();
         showWin(survivors[0]);
         if (onlineMode) pushStateToFirebase();
         return;
@@ -623,7 +623,7 @@ function handlePlayerDisconnect(playerIndex) {
         S.current = next;
     }
 
-    renderAll();
+    markAllDirty(); renderAll();
     if (onlineMode) {
         pushStateToFirebase();
         updateOnlineInteractivity();
@@ -821,7 +821,7 @@ function launchOnlineGame(room) {
     buildGridDOM();
     buildPlayerStrip();
     hideCombo(true);
-    renderAll();
+    markAllDirty(); renderAll();
     syncUndoBtn();
     updateOnlineInteractivity();
     setupChat();
@@ -845,7 +845,7 @@ function launchOnlineGame(room) {
             playRemoteMove(data.move.r, data.move.c, data);
         } else {
             S = deserializeState(data);
-            renderAll();
+            markAllDirty(); renderAll();
             updateOnlineInteractivity();
         }
     });
@@ -1094,7 +1094,7 @@ function startGame() {
     buildGridDOM();
     buildPlayerStrip();
     hideCombo(true);
-    renderAll();
+    markAllDirty(); renderAll();
     syncUndoBtn();
     if (IS_AI[0]) scheduleAiTurn();
     else setGridInteractive(true);
@@ -1279,11 +1279,16 @@ function makeFlyOrbEl(col, sz) {
 /* ══════════════════════════════════════════════════════════════════
    RENDER
    ══════════════════════════════════════════════════════════════════ */
+/* Dirty-cell tracking: only re-render cells that actually changed */
+const dirtyGrid = new Set();
+function markDirty(r, c) { dirtyGrid.add(r * 100 + c); }
+function markAllDirty() { if (!S.grid) return; for (let r = 0; r < cfg.rows; r++) for (let c = 0; c < cfg.cols; c++) dirtyGrid.add(r * 100 + c); }
+
 function renderAll() {
     if (!S.grid) return;
-    for (let r = 0; r < cfg.rows; r++)
-        for (let c = 0; c < cfg.cols; c++)
-            renderCell(r, c);
+    if (dirtyGrid.size === 0) { renderStrip(); renderBanner(); return; }
+    for (const key of dirtyGrid) { const r = (key / 100) | 0, c = key % 100; renderCell(r, c); }
+    dirtyGrid.clear();
     renderStrip();
     renderBanner();
 }
@@ -1610,7 +1615,7 @@ async function playRemoteMove(r, c, finalData) {
     updateGainBadge(S.current, S.orbCount[S.current] - turnOrbsBefore);
 
     const willExplodeImmediately = cell.count >= critMass(r, c);
-    renderAll();
+    markAllDirty(); renderAll();
     try {
         if (!willExplodeImmediately) await sessionDelay(60, mySession);
         await chainReact(mySession);
@@ -1626,7 +1631,7 @@ async function playRemoteMove(r, c, finalData) {
     const authoritative = deserializeState(finalData);
     S = authoritative;
 
-    renderAll();
+    markAllDirty(); renderAll();
     S.animating = false;
     updateOnlineInteractivity();
 }
@@ -1662,7 +1667,7 @@ async function handleClick(r, c) {
 
     const willExplodeImmediately = cell.count >= critMass(r, c);
     if (window.sfxPlace && !willExplodeImmediately) sfxPlace();
-    renderAll();
+    markDirty(r, c); renderAll();
     try {
         if (!willExplodeImmediately) await sessionDelay(60, mySession);
         await chainReact(mySession);
@@ -1691,7 +1696,7 @@ async function handleClick(r, c) {
     if (next <= S.current) S.turn = (S.turn || 0) + 1;
     S.current = next;
 
-    renderAll();
+    markAllDirty(); renderAll();
     S.animating = false;
     syncUndoBtn();
 
@@ -1776,11 +1781,13 @@ async function chainReact(session) {
             const cell = S.grid[r][c], owner = cell.owner, cm = critMass(r, c);
             cell.count -= cm; S.orbCount[owner] -= cm;
             if (cell.count <= 0) { cell.count = 0; cell.owner = -1; }
+            markDirty(r, c);
             neighbors(r, c).forEach(([nr, nc]) => {
                 const ncell = S.grid[nr][nc];
                 if (ncell.owner !== -1 && ncell.owner !== owner) { S.orbCount[ncell.owner] -= ncell.count; S.orbCount[owner] += ncell.count; ncell.owner = owner; }
                 else if (ncell.owner === -1) { ncell.owner = owner; }
                 ncell.count++; S.orbCount[owner]++;
+                markDirty(nr, nc);
                 const nel = cellEl(nr, nc);
                 if (nel) { nel.classList.remove('ping'); void nel.offsetWidth; nel.classList.add('ping'); }
             });
@@ -1789,7 +1796,7 @@ async function chainReact(session) {
         updateGainBadge(S.current, S.orbCount[S.current] - turnOrbsBefore);
         if (checkEliminationsAndWin()) break;
 
-        renderAll();
+        markAllDirty(); renderAll();
         await sessionDelay(SETTLE_MS, session ?? gameSession);
     }
 }
@@ -1804,7 +1811,7 @@ function checkEliminationsAndWin() {
             S.eliminated[i] = true;
     const survivors = S.eliminated.map((e, i) => !e ? i : -1).filter(i => i >= 0);
     if (survivors.length === 1) {
-        S.over = true; renderAll(); showWin(survivors[0]); return true;
+        S.over = true; markAllDirty(); renderAll(); showWin(survivors[0]); return true;
     }
     return false;
 }
@@ -1826,7 +1833,7 @@ function undoMove() {
     S = history.pop();
     for (let i = 0; i < PCOLORS.length; i++) updateGainBadge(i, 0);
     hideCombo(true);
-    renderAll();
+    markAllDirty(); renderAll();
     syncUndoBtn();
     if (!S.over && IS_AI[S.current]) scheduleAiTurn();
     else setGridInteractive(true);
@@ -1867,7 +1874,7 @@ function restartGame() {
     initState();
     buildGridDOM();
     buildPlayerStrip();
-    renderAll();
+    markAllDirty(); renderAll();
     syncUndoBtn();
     if (IS_AI[0]) scheduleAiTurn();
     else setGridInteractive(true);
@@ -1939,7 +1946,7 @@ window.addEventListener('resize', () => {
     clearTimeout(rTimer);
     rTimer = setTimeout(() => {
         if (document.getElementById('game').style.display !== 'none') {
-            buildGridDOM(); renderAll();
+            buildGridDOM(); markAllDirty(); renderAll();
         }
     }, 200);
 });
