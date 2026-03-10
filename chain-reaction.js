@@ -953,22 +953,21 @@ function stopOnlineTurnTimer() {
 function _forceOnlineMove() {
     if (!onlineMode || !S || S.over || S.animating || S.current !== myPlayerIndex) return;
 
-    // Prefer cells we already own (near-critical first), otherwise any empty cell
-    const candidates = [];
+    // Collect cells we own first; fall back to empty cells if we own nothing.
+    // Pick randomly — idling should be a punishment, not a free optimal move.
+    const owned = [];
+    const empty = [];
     for (let r = 0; r < cfg.rows; r++) {
         for (let c = 0; c < cfg.cols; c++) {
             const cell = S.grid[r][c];
-            if (cell.owner !== -1 && cell.owner !== myPlayerIndex) continue;
-            const priority = cell.owner === myPlayerIndex
-                ? critMass(r, c) - cell.count  // lower gap = higher priority
-                : 99;
-            candidates.push({ r, c, priority });
+            if (cell.owner === myPlayerIndex) owned.push({ r, c });
+            else if (cell.owner === -1) empty.push({ r, c });
         }
     }
+    const candidates = owned.length ? owned : empty;
     if (!candidates.length) return;
 
-    candidates.sort((a, b) => a.priority - b.priority);
-    const { r, c } = candidates[0];
+    const { r, c } = candidates[Math.floor(Math.random() * candidates.length)];
 
     // Announce in chat
     if (roomRef) {
@@ -1271,10 +1270,9 @@ function makeOrbEl(col, sz, dx, dy, wobbleStagger) {
 function makeFlyOrbEl(col, sz) {
     const orb = document.createElement('div');
     orb.className = 'fly-orb';
-    orb.style.cssText = `
-    width:${sz}px;height:${sz}px;
-    background:${col};
-    box-shadow:0 0 ${Math.round(sz * .9)}px 1px ${col}, 0 0 ${Math.round(sz * 2.0)}px ${col}dd, 0 0 ${Math.round(sz * 4.0)}px ${col}99;`;
+    const shadow = lowGfx ? '' :
+        `box-shadow:0 0 ${Math.round(sz * .9)}px 1px ${col}, 0 0 ${Math.round(sz * 2.0)}px ${col}dd, 0 0 ${Math.round(sz * 4.0)}px ${col}99;`;
+    orb.style.cssText = `width:${sz}px;height:${sz}px;background:${col};${shadow}`;
     return orb;
 }
 
@@ -1709,6 +1707,10 @@ async function handleClick(r, c) {
     if (onlineMode) {
         await pushStateToFirebase();
         S.pendingMove = null;
+        // Refresh turnDeadline locally so the next player's timer shows correctly
+        // on the move-maker's screen. Other clients derive this from the server ts;
+        // we have to set it ourselves since we skip our own Firebase echo.
+        if (!S.over) S.turnDeadline = serverNow() + TURN_TIMER_MS;
         updateOnlineInteractivity();
     } else if (IS_AI[S.current]) {
         scheduleAiTurn();
@@ -1721,8 +1723,6 @@ async function handleClick(r, c) {
    FLYING ORB ANIMATIONS
    ══════════════════════════════════════════════════════════════════ */
 function spawnFlyingOrbs(unstable) {
-    if (lowGfx) return;
-    if (lowGfx) return;
     // Batch all rect reads first to avoid interleaved layout thrashing
     const orbData = [];
     unstable.forEach(([r, c]) => {

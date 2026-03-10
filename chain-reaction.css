@@ -2116,5 +2116,5 @@ body.low-gfx .cell.near-crit .orb { box-shadow: none !important; }
 body.low-gfx .cell-glow { box-shadow: none !important; }
 body.low-gfx .near-crit { box-shadow: none !important; animation: none !important; }
 body.low-gfx .ripple { display: none !important; }
-body.low-gfx .fly-orb { display: none !important; }
+
 body.low-gfx #grid-and-combo { animation: none !important; }
