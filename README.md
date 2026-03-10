@@ -37,7 +37,7 @@ Five grid sizes are available: 6×6, 7×7, 8×8, 9×9, and 10×10.
 
 ### AI Opponents
 
-The Normal AI is based on the heuristic approach described by [Keshav Agrawal](https://keshav.codes/chainreaction/), using a minimax algorithm with a search depth of 1–2 moves. Hard AI is based on the approach from [notshridhar/chain-reaction-ai](https://github.com/notshridhar/chain-reaction-ai), searching 3–4 moves deep with alpha-beta pruning for noticeably stronger play. Both difficulty levels scale their search depth automatically based on grid size to remain responsive.
+The Normal AI is based on the heuristic approach described by [Keshav Agrawal](https://keshav.codes/chainreaction/), using a minimax algorithm with a search depth of 1–2 moves. Hard AI is based on the approach from [notshridhar/chain-reaction-ai](https://github.com/notshridhar/chain-reaction-ai), searching 3–4 moves deep with alpha-beta pruning for noticeably stronger play. Both difficulty levels scale their search depth automatically based on grid size to remain responsive. AI computation runs in a dedicated Web Worker to keep the UI thread responsive.
 
 ### Online Multiplayer
 
@@ -45,16 +45,20 @@ The Normal AI is based on the heuristic approach described by [Keshav Agrawal](h
 - Optional room passwords to restrict access to invited players
 - Random matchmaking to be paired with any available public room
 - A 30-second turn timer synced to Firebase's server clock, ensuring accuracy regardless of each device's local system time
+- The timer resets to a full 30 seconds for each new player's turn — including after a forced move or a player disconnect
+- If a player's timer runs out, a move is forced on their behalf by placing on a random owned cell (or a random empty cell if they own none). Idling is a punishment, not a strategy
 - In-game chat visible to all players in the room
-- Disconnect handling so remaining players are notified if the host leaves
+- Disconnect handling so remaining players are notified if someone leaves mid-game
 
 ### Visuals and Effects
 
 Orbs animate visually as they fly into neighbouring cells during explosions. A chain combo counter tracks how many consecutive explosions occur in a single move. Screen shake, ambient background glow, a crown badge on the leading player, and per-move gain badges round out the visual feedback.
 
+A Low Graphics mode is available in-game to reduce visual effects on lower-end devices. In this mode, glow, ripple, shake, and ambient effects are disabled. Flying orb animations are retained but rendered as plain flat dots with no glow.
+
 ### Music Player
 
-A built-in MIDI music player powered by [SpessaSynth](https://github.com/spessasus/SpessaSynth) provides a 15-track soundtrack. Controls include previous, play/pause, next, a volume slider, and a seek bar. The player repositions itself contextually between the setup screen, online lobby, and in-game view.
+A built-in MIDI music player powered by [SpessaSynth](https://github.com/spessasus/SpessaSynth) provides a 15-track soundtrack. The SpessaSynth library is bundled locally so music works fully offline with no CDN dependency. Controls include previous, play/pause, next, a volume slider, and a seek bar. The player repositions itself contextually between the setup screen, online lobby, and in-game view.
 
 ### Other
 
@@ -108,7 +112,9 @@ chain-reaction/
 ├── chain-reaction.css             # All styles including responsive breakpoints
 ├── chain-reaction-midi.js         # MIDI music player (SpessaSynth integration)
 ├── chain-reaction-sfx.js          # Sound effects
+├── ai-worker.js                   # AI computation Web Worker
 ├── spessasynth_processor.min.js   # SpessaSynth AudioWorklet processor
+├── spessasynth_bundle.js          # SpessaSynth main library (locally bundled, offline-capable)
 ├── soundfont.sf3                  # SF3 soundfont for MIDI playback
 ├── midi/                          # MIDI track files (15 tracks)
 └── images/                        # Favicon and other assets
@@ -121,13 +127,13 @@ chain-reaction/
 | Technology | Purpose |
 |---|---|
 | Vanilla JavaScript (ES2020) | Game logic, AI, UI |
+| Web Workers | AI computation and MIDI normalization off the main thread |
 | Firebase Realtime Database | Online multiplayer state sync |
-| [SpessaSynth](https://github.com/spessasus/SpessaSynth) (ESM via jsDelivr) | In-browser MIDI synthesis |
+| [SpessaSynth](https://github.com/spessasus/SpessaSynth) (locally bundled) | In-browser MIDI synthesis |
 | Web Audio API + AudioWorklet | Music playback |
 | CSS custom properties + clamp() | Responsive design |
+| Rollup | Used once to bundle SpessaSynth for offline use |
 | GitHub Pages | Hosting |
-
-No build tools, no frameworks, and no dependencies to install. Open `index.html` directly in any modern browser.
 
 ---
 
