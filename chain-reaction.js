@@ -626,6 +626,9 @@ function handlePlayerDisconnect(playerIndex) {
 
     markAllDirty(); renderAll();
     if (onlineMode) {
+        // Reset the deadline so the next player gets a full 30 seconds,
+        // not the remaining time from the player who just left.
+        if (!S.over) S.turnDeadline = serverNow() + TURN_TIMER_MS;
         pushStateToFirebase();
         updateOnlineInteractivity();
     }
