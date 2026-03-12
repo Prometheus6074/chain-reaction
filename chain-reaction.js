@@ -506,8 +506,8 @@ function updateWaitingRoomUI(room) {
         const col = ALL_COLORS[i];
         const div = document.createElement('div');
         div.className = 'ol-player-slot' + (filled ? ' filled' : '');
-        div.style.setProperty('--slot-color', col);
         const slotColor = (filled && slots[i].color) ? slots[i].color : col;
+        div.style.setProperty('--slot-color', slotColor);
         div.innerHTML = `
             <div class="ol-slot-dot ${filled ? 'filled' : ''}" style="color:${slotColor}; background:${filled ? slotColor : 'transparent'}"></div>
             <span style="color:${filled ? slotColor : 'var(--dim)'}">
