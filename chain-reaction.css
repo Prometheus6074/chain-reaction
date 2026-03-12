@@ -5,6 +5,8 @@
     margin: 0;
     -webkit-tap-highlight-color: transparent;
     padding: 0;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 :root {
@@ -40,6 +42,16 @@ body {
     align-items: center;
     justify-content: flex-start;
     overflow-x: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* Re-enable text selection only where the user needs to type or read */
+input, textarea, select,
+#chat-messages, .chat-msg-text,
+#ol-code-text {
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 /* ── SETUP ── */
@@ -2011,6 +2023,8 @@ body.low-gfx #grid-and-combo { animation: none !important; }
     transition: opacity 0.5s ease;
     cursor: pointer;
     touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 #intro-canvas {
@@ -2026,7 +2040,6 @@ body.low-gfx #grid-and-combo { animation: none !important; }
     text-align: center;
     opacity: 0;
     pointer-events: none;
-    user-select: none;
 }
 
 #intro-title {
