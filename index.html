@@ -44,7 +44,7 @@
       Online Multiplayer
     </button>
   </div>
-  <div id="music-player-slot-setup"></div>
+  <div class="settings-anchor"><button class="ghost-btn icon-btn settings-btn" onclick="toggleSettings()" title="Settings" aria-label="Settings"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
 </div>
 <div id="online-lobby">
 
@@ -170,7 +170,7 @@
     </div>
   </div>
 
-  <div id="music-player-slot-online"></div>
+  <div class="settings-anchor"><button class="ghost-btn icon-btn settings-btn" onclick="toggleSettings()" title="Settings" aria-label="Settings"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
 
 </div><!-- /online-lobby -->
 
@@ -210,9 +210,8 @@
         <svg id="chat-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       </button>
       <button class="ghost-btn" id="new-game-btn" onclick="confirmNewGame(this)">New Game</button>
-      <button class="ghost-btn icon-btn" id="lowgfx-btn" onclick="toggleLowGfx()" title="Low Graphics">
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-      </button>
+
+      <button class="ghost-btn icon-btn settings-btn" id="ingame-settings-btn" onclick="toggleSettings()" title="Settings" aria-label="Settings"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
     </div>
     <div id="grid-and-combo">
       <div id="left-side">
@@ -227,7 +226,6 @@
       </div>
     </div>
   </div>
-  <div id="music-player-slot"></div>
 </div>
 <div id="win-overlay">
   <div class="win-box" id="win-box">
@@ -243,6 +241,62 @@
 
 <script src="chain-reaction.js"></script>
 <script src="chain-reaction-sfx.js"></script>
-<script src="chain-reaction-midi.js"></script>
+<script src="chain-reaction-audio.js"></script>
+<!-- ══ SETTINGS PANEL ══ -->
+<div id="settings-overlay" onclick="toggleSettings()"></div>
+<div id="settings-panel" aria-label="Settings panel">
+  <div id="settings-header">
+    <span>Settings</span>
+    <button id="settings-close-btn" onclick="toggleSettings()" aria-label="Close settings"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+  </div>
+  <div id="settings-body">
+
+    <div class="settings-section-label">Audio</div>
+
+    <div class="settings-row">
+      <div class="settings-row-left">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+        <span>Music Volume</span>
+      </div>
+      <div class="settings-slider-wrap">
+        <input type="range" id="s-music-vol" class="settings-slider" min="0" max="100" value="50"
+               oninput="onSettingsMusicVol(this.value)">
+        <span class="settings-val" id="s-music-val"></span>
+      </div>
+    </div>
+
+    <div class="settings-row">
+      <div class="settings-row-left">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+        <span>SFX Volume</span>
+      </div>
+      <div class="settings-slider-wrap">
+        <input type="range" id="s-sfx-vol" class="settings-slider" min="0" max="100" value="55"
+               oninput="onSettingsSfxVol(this.value)">
+        <span class="settings-val" id="s-sfx-val"></span>
+      </div>
+    </div>
+
+    <div class="settings-section-label">Graphics</div>
+
+    <div class="settings-row">
+      <div class="settings-row-left">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        <span>Low Graphics</span>
+      </div>
+      <button class="s-toggle" id="s-lowgfx-toggle" onclick="onSettingsLowGfx()" aria-label="Toggle low graphics"></button>
+    </div>
+
+    <div class="settings-row">
+      <div class="settings-row-left">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20M12 2v20"/><path d="m4.93 4.93 14.14 14.14M19.07 4.93 4.93 19.07"/></svg>
+        <span>Screen Shake</span>
+      </div>
+      <button class="s-toggle" id="s-shake-toggle" onclick="onSettingsScreenShake()" aria-label="Toggle screen shake"></button>
+    </div>
+
+  </div>
+</div>
+
 </body>
 </html>

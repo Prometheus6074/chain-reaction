@@ -13,17 +13,27 @@ function sfxCtx() {
     return window._sfxCtx;
 }
 
-/* ── Master SFX gain (lets user mute SFX independently if desired) ── */
+/* ── Master SFX gain ── */
 let _sfxMasterGain = null;
 function sfxOut() {
     const ctx = sfxCtx();
     if (!_sfxMasterGain || _sfxMasterGain.context !== ctx) {
         _sfxMasterGain = ctx.createGain();
-        _sfxMasterGain.gain.value = 0.55;
+        try {
+            const saved = JSON.parse(localStorage.getItem('cr_settings') || '{}');
+            _sfxMasterGain.gain.value = (saved.sfxVol !== undefined ? saved.sfxVol : 55) / 100;
+        } catch (e) { _sfxMasterGain.gain.value = 0.55; }
+        if (window._sfxPendingGain !== undefined) _sfxMasterGain.gain.value = window._sfxPendingGain;
         _sfxMasterGain.connect(ctx.destination);
     }
     return _sfxMasterGain;
 }
+
+window.setSfxVolume = function (v) {
+    const gain = Math.max(0, Math.min(1, v));
+    if (_sfxMasterGain) _sfxMasterGain.gain.value = gain;
+    window._sfxPendingGain = gain;
+};
 
 /* ── Resume context on first interaction (browser autoplay policy) ── */
 function sfxResume() {

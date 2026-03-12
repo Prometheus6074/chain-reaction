@@ -173,14 +173,9 @@ function syncGridBtns() {
    ══════════════════════════════════════════════════════════════════ */
 
 /* ── Step-panel helpers ── */
-// Map panel id → the input to auto-focus when that panel is shown (Android keyboard fix)
-const OL_PANEL_FOCUS = {
-    'ol-username':   'ol-username-input',
-    'ol-join-panel': 'ol-code-input',
-};
+const OL_PANEL_FOCUS = { 'ol-username': 'ol-username-input', 'ol-join-panel': 'ol-code-input' };
 
 function showOlPanel(id) {
-    // Dismiss keyboard from any currently-focused input before switching panels
     if (document.activeElement && document.activeElement.tagName === 'INPUT') {
         document.activeElement.blur();
     }
@@ -188,14 +183,8 @@ function showOlPanel(id) {
         const el = document.getElementById(p);
         if (el) el.style.display = p === id ? 'flex' : 'none';
     });
-    // Auto-focus the primary input for this panel so Android keyboard opens on first tap
     const focusId = OL_PANEL_FOCUS[id];
-    if (focusId) {
-        setTimeout(() => {
-            const inp = document.getElementById(focusId);
-            if (inp) inp.focus();
-        }, 80);
-    }
+    if (focusId) setTimeout(() => { const inp = document.getElementById(focusId); if (inp) inp.focus(); }, 80);
 }
 
 function showOnlineLobby() {
@@ -835,7 +824,7 @@ function launchOnlineGame(room) {
 
     document.getElementById('online-lobby').classList.remove('show');
     document.getElementById('game').style.display = 'flex';
-    if (window.moveMusicPlayer) window.moveMusicPlayer('game');
+    if (window.moveMusicPlayer) window.moveMusicPlayer('game-online');
 
     S = deserializeState(room.state);
     window._orbAnimEpoch = Date.now();
@@ -1006,17 +995,84 @@ function _forceOnlineMove() {
 /* ══════════════════════════════════════════════════════════════════
    SCREEN SHAKE
    ══════════════════════════════════════════════════════════════════ */
-/* Low Graphics Mode */
-let lowGfx = false;
-function toggleLowGfx() {
-    lowGfx = !lowGfx;
+/* ══════════════════════════════════════════════════════════════════
+   SETTINGS — persisted to localStorage
+   ══════════════════════════════════════════════════════════════════ */
+const SETTINGS_KEY = 'cr_settings';
+const SETTINGS_DEFAULTS = { musicVol: 50, sfxVol: 55, lowGfx: false, screenShake: true };
+
+function loadSettings() {
+    try { return Object.assign({}, SETTINGS_DEFAULTS, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); }
+    catch (e) { return Object.assign({}, SETTINGS_DEFAULTS); }
+}
+function saveSettings(s) {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch (e) {}
+}
+function applySettings(s) {
+    lowGfx = !!s.lowGfx;
+    screenShake = s.screenShake !== false;
     document.body.classList.toggle('low-gfx', lowGfx);
-    const btn = document.getElementById('lowgfx-btn');
-    if (btn) btn.classList.toggle('active', lowGfx);
+    if (window.setMusicVolume) window.setMusicVolume(s.musicVol / 100);
+    if (window.setSfxVolume)   window.setSfxVolume(s.sfxVol / 100);
+    syncSettingsUI(s);
+}
+function syncSettingsUI(s) {
+    const mv = document.getElementById('s-music-vol');
+    const sv = document.getElementById('s-sfx-vol');
+    const lg = document.getElementById('s-lowgfx-toggle');
+    const ss = document.getElementById('s-shake-toggle');
+    const mvv = document.getElementById('s-music-val');
+    const svv = document.getElementById('s-sfx-val');
+    if (mv)  { mv.value = s.musicVol; mv.style.setProperty('--val', s.musicVol + '%'); }
+    if (sv)  { sv.value = s.sfxVol;   sv.style.setProperty('--val', s.sfxVol + '%'); }
+    if (lg)  lg.classList.toggle('on', !!s.lowGfx);
+    if (ss)  ss.classList.toggle('on', s.screenShake !== false);
+    if (mvv) mvv.textContent = s.musicVol;
+    if (svv) svv.textContent = s.sfxVol;
 }
 
+const _settings = loadSettings();
+let lowGfx    = !!_settings.lowGfx;
+let screenShake = _settings.screenShake !== false;
+document.body.classList.toggle('low-gfx', lowGfx);
+
+function toggleSettings() {
+    const panel = document.getElementById('settings-panel');
+    const overlay = document.getElementById('settings-overlay');
+    if (!panel) return;
+    const open = panel.classList.toggle('open');
+    if (overlay) overlay.classList.toggle('open', open);
+    // Mark active settings buttons
+    document.querySelectorAll('.settings-btn').forEach(b => b.classList.toggle('active', open));
+    if (open) syncSettingsUI(loadSettings());
+}
+function onSettingsMusicVol(val) {
+    const s = loadSettings(); s.musicVol = +val; saveSettings(s);
+    if (window.setMusicVolume) window.setMusicVolume(s.musicVol / 100);
+    const el = document.getElementById('s-music-vol'); if (el) el.style.setProperty('--val', val + '%');
+    const vEl = document.getElementById('s-music-val'); if (vEl) vEl.textContent = val;
+}
+function onSettingsSfxVol(val) {
+    const s = loadSettings(); s.sfxVol = +val; saveSettings(s);
+    if (window.setSfxVolume) window.setSfxVolume(s.sfxVol / 100);
+    const el = document.getElementById('s-sfx-vol'); if (el) el.style.setProperty('--val', val + '%');
+    const vEl = document.getElementById('s-sfx-val'); if (vEl) vEl.textContent = val;
+}
+function onSettingsLowGfx() {
+    const s = loadSettings(); s.lowGfx = !s.lowGfx; saveSettings(s);
+    lowGfx = s.lowGfx;
+    document.body.classList.toggle('low-gfx', lowGfx);
+    const btn = document.getElementById('s-lowgfx-toggle'); if (btn) btn.classList.toggle('on', lowGfx);
+}
+function onSettingsScreenShake() {
+    const s = loadSettings(); s.screenShake = !s.screenShake; saveSettings(s);
+    screenShake = s.screenShake;
+    const btn = document.getElementById('s-shake-toggle'); if (btn) btn.classList.toggle('on', screenShake);
+}
+function toggleLowGfx() { onSettingsLowGfx(); }
+
 function triggerShake(comboStep, unstableCount) {
-    if (lowGfx) return;
+    if (lowGfx || !screenShake) return;
     if (comboStep < 3 && unstableCount < 4) return;
     const grid = document.getElementById('grid-and-combo');
     if (!grid) return;
@@ -1108,7 +1164,7 @@ function startGame() {
 
     document.getElementById('setup').style.display = 'none';
     document.getElementById('game').style.display = 'flex';
-    if (window.moveMusicPlayer) window.moveMusicPlayer('game');
+    if (window.moveMusicPlayer) window.moveMusicPlayer('game-single');
     history = [];
     initState();
     buildGridDOM();
@@ -1978,6 +2034,24 @@ function darken(hex, a) {
 /* ══════════════════════════════════════════════════════════════════
    RESPONSIVE
    ══════════════════════════════════════════════════════════════════ */
+/* ── Android keyboard dismiss ── */
+(function () {
+    const lobby = document.getElementById('online-lobby');
+    if (!lobby) return;
+    lobby.addEventListener('touchstart', function (e) {
+        const active = document.activeElement;
+        if (!active || active.tagName !== 'INPUT') return;
+        if (!active.contains(e.target) && active !== e.target) active.blur();
+    }, { passive: true });
+})();
+
+/* ── Apply saved settings on load ── */
+(function () {
+    function go() { applySettings(loadSettings()); }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go);
+    else go();
+})();
+
 let rTimer;
 window.addEventListener('resize', () => {
     clearTimeout(rTimer);
@@ -1987,17 +2061,3 @@ window.addEventListener('resize', () => {
         }
     }, 200);
 });
-
-/* ── Android keyboard dismiss: tap outside any input in the online lobby ── */
-(function () {
-    const lobby = document.getElementById('online-lobby');
-    if (!lobby) return;
-    lobby.addEventListener('touchstart', function (e) {
-        const active = document.activeElement;
-        if (!active || active.tagName !== 'INPUT') return;
-        // If the touch target is outside the currently-focused input, blur it
-        if (!active.contains(e.target) && active !== e.target) {
-            active.blur();
-        }
-    }, { passive: true });
-})();
