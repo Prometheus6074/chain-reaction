@@ -446,11 +446,29 @@ async function joinRandomRoom() {
 }
 
 /* ── Waiting room ── */
+/* ── Lobby left notice ── */
+let _prevSlotKeys = null;
+let _prevSlotNames = {};
+function showLobbyLeftNotice(name) {
+    let toast = document.getElementById('host-left-toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'host-left-toast';
+        toast.className = 'host-left-toast cr-toast';
+        document.body.appendChild(toast);
+    }
+    toast.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:5px"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg> ${name} left the room.`;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 3500);
+}
+
 function enterWaitingRoom() {
     showOlPanel('ol-waiting');
     document.getElementById('ol-code-text').textContent = roomCode;
     document.getElementById('ol-start-btn').style.display = isHost ? '' : 'none';
     document.getElementById('ol-host-hint').style.display = isHost ? 'none' : '';
+    _prevSlotKeys = null;
+    _prevSlotNames = {};
 
     // Listen for room changes
     stopRoomListeners();
@@ -468,6 +486,21 @@ function enterWaitingRoom() {
         }
         const room = snap.val();
         updateWaitingRoomUI(room);
+
+        // Detect if a non-host slot was removed (player left lobby)
+        if (_prevSlotKeys) {
+            const currentKeys = new Set(Object.keys(room.slots || {}));
+            for (const k of _prevSlotKeys) {
+                if (!currentKeys.has(k) && parseInt(k) !== myPlayerIndex) {
+                    const leftName = _prevSlotNames[k] || ALL_NAMES[parseInt(k)];
+                    showLobbyLeftNotice(leftName);
+                }
+            }
+        }
+        const currentSlots = room.slots || {};
+        _prevSlotKeys = new Set(Object.keys(currentSlots));
+        Object.entries(currentSlots).forEach(([k, v]) => { if (v && v.name) _prevSlotNames[k] = v.name; });
+
         if (room.status === 'playing' && room.state) {
             stopRoomListeners();
             launchOnlineGame(room);
@@ -580,8 +613,8 @@ async function leaveRoom() {
         // In lobby as host — delete room so guests know
         try { await roomRef.remove(); } catch (e) { /* ignore */ }
     } else if (myPlayerIndex >= 0) {
-        // In lobby as guest — just mark left
-        try { roomRef.child(`slots/${myPlayerIndex}/left`).set(true); } catch (e) { /* ignore */ }
+        // In lobby as guest — remove slot so others see the vacancy immediately
+        try { await roomRef.child(`slots/${myPlayerIndex}`).remove(); } catch (e) { /* ignore */ }
     }
 
     _doLocalLeave();
