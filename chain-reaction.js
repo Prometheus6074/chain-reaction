@@ -37,6 +37,7 @@ const SETTLE_MS = 50;
 
 /* ── BALL PICKER STATE ── */
 const ballModes = new Array(8).fill(0);
+const ballColors = [...ALL_COLORS]; // per-slot chosen color
 const ballOrder = [];
 
 let cfg = { rows: 9, cols: 9 };
@@ -72,7 +73,7 @@ let onlineCfgRows = 9;
 let onlineCfgCols = 9;
 let onlineNumPlayers = 2;
 let onlineRoomPassword = '';
-let myUsername = sessionStorage.getItem('cr_username') || '';
+let myUsername = sessionStorage.getItem('cr_username') || localStorage.getItem('cr_username') || '';
 let _onlineTurnTimerInterval = null;
 const TURN_TIMER_MS = 30000; // 30 seconds per turn
 
@@ -149,12 +150,15 @@ function toggleBall(i) {
 
 function syncBallGrid() {
     ALL_COLORS.forEach((_, i) => {
-        const slot = document.getElementById(`bs${i}`);
-        const num = document.getElementById(`bn${i}`);
+        const slot  = document.getElementById(`bs${i}`);
+        const num   = document.getElementById(`bn${i}`);
         const label = document.getElementById(`bl${i}`);
-        const mode = ballModes[i];
-        const pos = ballOrder.indexOf(i);
+        const mode  = ballModes[i];
+        const pos   = ballOrder.indexOf(i);
+        const col   = ballColors[i];
         slot.className = 'ball-slot ' + (mode === 1 ? 'mode-player' : mode === 2 ? 'mode-ai' : mode === 3 ? 'mode-hard-ai' : '');
+        slot.style.setProperty('--bc',   col);
+        slot.style.setProperty('--bc66', col + '66');
         if (mode === 1) { num.textContent = pos + 1; label.textContent = `P${pos + 1}`; }
         else if (mode === 2) { num.textContent = 'AI'; label.textContent = 'AI'; }
         else if (mode === 3) { num.textContent = 'H'; label.textContent = 'Hard AI'; }
@@ -162,6 +166,7 @@ function syncBallGrid() {
     });
     document.getElementById('start-btn').disabled = ballOrder.length < 2;
 }
+
 
 function syncGridBtns() {
     [6, 7, 8, 9, 10].forEach((sz, i) =>
@@ -214,6 +219,7 @@ function confirmUsername() {
     }
     myUsername = val;
     sessionStorage.setItem('cr_username', myUsername);
+    try { localStorage.setItem('cr_username', myUsername); } catch(e) {}
     showOlMode();
 }
 
@@ -288,7 +294,7 @@ async function createRoom() {
             cols: onlineCfgCols,
             numPlayers: onlineNumPlayers
         },
-        slots: { 0: { uid: myUid, joined: true, name: myUsername } },
+        slots: { 0: { uid: myUid, joined: true, name: myUsername, color: ALL_COLORS[0] } },
         hostUid: myUid,
         status: 'lobby',
         state: null,
@@ -355,7 +361,7 @@ async function joinRoomByCode() {
     if (assignedSlot === -1) { showJoinError('This room is full!'); return; }
 
     myPlayerIndex = assignedSlot;
-    await roomRef.child(`slots/${assignedSlot}`).set({ uid: myUid, joined: true, name: myUsername });
+    await roomRef.child(`slots/${assignedSlot}`).set({ uid: myUid, joined: true, name: myUsername, color: ALL_COLORS[assignedSlot] });
 
     // Show lock icon in waiting room if room has password
     const lockEl = document.getElementById('ol-lock-icon');
@@ -422,7 +428,7 @@ async function joinRandomRoom() {
         roomRef = db.ref(`rooms/${roomCode}`);
         myPlayerIndex = pick.openSlot;
 
-        await roomRef.child(`slots/${pick.openSlot}`).set({ uid: myUid, joined: true, name: myUsername });
+        await roomRef.child(`slots/${pick.openSlot}`).set({ uid: myUid, joined: true, name: myUsername, color: ALL_COLORS[pick.openSlot] });
 
         statusEl.style.display = 'none';
         btn.disabled = false;
@@ -470,6 +476,22 @@ function enterWaitingRoom() {
     onlineListeners.push({ ref: roomRef, listener, event: 'value' });
 }
 
+
+/* ── Cycle color for the local player in the online waiting room ── */
+async function cycleOnlineColor() {
+    if (!roomRef || myPlayerIndex < 0) return;
+    const snap = await roomRef.child('slots').once('value');
+    const slots = snap.val() || {};
+    const used = new Set(Object.entries(slots)
+        .filter(([k]) => parseInt(k) !== myPlayerIndex && slots[k].color)
+        .map(([, v]) => v.color));
+    const cur = ALL_COLORS.indexOf(slots[myPlayerIndex]?.color || ALL_COLORS[myPlayerIndex]);
+    let next = (cur + 1) % ALL_COLORS.length, guard = 0;
+    while (used.has(ALL_COLORS[next]) && guard++ < ALL_COLORS.length)
+        next = (next + 1) % ALL_COLORS.length;
+    await roomRef.child(`slots/${myPlayerIndex}/color`).set(ALL_COLORS[next]);
+}
+
 function updateWaitingRoomUI(room) {
     const slots = room.slots || {};
     const numJoined = Object.keys(slots).length;
@@ -485,12 +507,13 @@ function updateWaitingRoomUI(room) {
         const div = document.createElement('div');
         div.className = 'ol-player-slot' + (filled ? ' filled' : '');
         div.style.setProperty('--slot-color', col);
+        const slotColor = (filled && slots[i].color) ? slots[i].color : col;
         div.innerHTML = `
-            <div class="ol-slot-dot ${filled ? 'filled' : ''}" style="color:${col}; background:${filled ? col : 'transparent'}"></div>
-            <span style="color:${filled ? col : 'var(--dim)'}">
+            <div class="ol-slot-dot ${filled ? 'filled' : ''}" style="color:${slotColor}; background:${filled ? slotColor : 'transparent'}"></div>
+            <span style="color:${filled ? slotColor : 'var(--dim)'}">
               ${slotName}${isMe ? '' : filled ? ' — joined' : ' — waiting…'}
             </span>
-            ${isMe ? '<span class="ol-me-tag">You</span>' : ''}`;
+            ${isMe ? `<span class="ol-me-tag">You</span><button class="ol-color-btn" style="background:${slotColor};box-shadow:0 0 7px ${slotColor}88" onclick="cycleOnlineColor()" title="Change color"></button>` : ''}`;
         list.appendChild(div);
     }
 
@@ -517,7 +540,8 @@ async function onlineStartGame() {
     const actualCount = numJoined;
     await roomRef.child('config/numPlayers').set(actualCount);
 
-    PCOLORS = Array.from({ length: actualCount }, (_, i) => ALL_COLORS[i]);
+    PCOLORS = Array.from({ length: actualCount }, (_, i) => (slots[i]?.color) || ALL_COLORS[i]);
+    await roomRef.child('config/playerColors').set(PCOLORS);
     PNAMES = Array.from({ length: actualCount }, (_, i) => slots[i]?.name || ALL_NAMES[i]);
     IS_AI = new Array(actualCount).fill(false);
     cfg = { rows: room.config.rows, cols: room.config.cols };
@@ -571,6 +595,7 @@ function _doLocalLeave() {
     resetOnlineState();
 
     teardownChat();
+    releaseWakeLock();
 
     document.getElementById('win-overlay').classList.remove('show');
     document.getElementById('game').style.display = 'none';
@@ -815,9 +840,10 @@ function launchOnlineGame(room) {
     _gameLaunched = true;
     onlineMode = true;
     const np = room.config.numPlayers;
-    PCOLORS = Array.from({ length: np }, (_, i) => ALL_COLORS[i]);
-    const storedNames = room.config.playerNames ? Object.values(room.config.playerNames) : [];
-    PNAMES = Array.from({ length: np }, (_, i) => storedNames[i] || ALL_NAMES[i]);
+    const storedNames  = room.config.playerNames  ? Object.values(room.config.playerNames)  : [];
+    const storedColors = room.config.playerColors ? Object.values(room.config.playerColors) : [];
+    PNAMES  = Array.from({ length: np }, (_, i) => storedNames[i]  || ALL_NAMES[i]);
+    PCOLORS = Array.from({ length: np }, (_, i) => storedColors[i] || ALL_COLORS[i]);
     IS_AI = new Array(np).fill(false);
     IS_HARD_AI = new Array(np).fill(false);
     cfg = { rows: room.config.rows, cols: room.config.cols };
@@ -837,6 +863,7 @@ function launchOnlineGame(room) {
     updateOnlineInteractivity();
     setupChat();
 
+    requestWakeLock();
     // Track last applied move sequence to avoid duplicates (clock-skew-proof)
     let lastSeenMoveSeq = room.state?.moveSeq ?? 0;
 
@@ -999,7 +1026,7 @@ function _forceOnlineMove() {
    SETTINGS — persisted to localStorage
    ══════════════════════════════════════════════════════════════════ */
 const SETTINGS_KEY = 'cr_settings';
-const SETTINGS_DEFAULTS = { musicVol: 25, sfxVol: 55, lowGfx: false, screenShake: true };
+const SETTINGS_DEFAULTS = { musicVol: 50, sfxVol: 55, lowGfx: false, screenShake: true, hapticFeedback: true, orbSkin: 'glow', keepAwake: true };
 
 function loadSettings() {
     try { return Object.assign({}, SETTINGS_DEFAULTS, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); }
@@ -1012,6 +1039,9 @@ function applySettings(s) {
     lowGfx = !!s.lowGfx;
     screenShake = s.screenShake !== false;
     document.body.classList.toggle('low-gfx', lowGfx);
+    document.body.classList.remove('skin-flat', 'skin-numbered');
+    if (s.orbSkin === 'flat') document.body.classList.add('skin-flat');
+    else if (s.orbSkin === 'numbered') document.body.classList.add('skin-numbered');
     if (window.setMusicVolume) window.setMusicVolume(s.musicVol / 100);
     if (window.setSfxVolume)   window.setSfxVolume(s.sfxVol / 100);
     syncSettingsUI(s);
@@ -1029,6 +1059,12 @@ function syncSettingsUI(s) {
     if (ss)  ss.classList.toggle('on', s.screenShake !== false);
     if (mvv) mvv.textContent = s.musicVol;
     if (svv) svv.textContent = s.sfxVol;
+    const hap = document.getElementById('s-haptic-toggle');
+    if (hap) hap.classList.toggle('on', s.hapticFeedback !== false);
+    const kaw = document.getElementById('s-keepawake-toggle');
+    if (kaw) kaw.classList.toggle('on', s.keepAwake !== false);
+    document.querySelectorAll('.orb-skin-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.skin === (s.orbSkin || 'glow')));
 }
 
 const _settings = loadSettings();
@@ -1070,6 +1106,58 @@ function onSettingsScreenShake() {
     const btn = document.getElementById('s-shake-toggle'); if (btn) btn.classList.toggle('on', screenShake);
 }
 function toggleLowGfx() { onSettingsLowGfx(); }
+function onSettingsHaptic() {
+    const s = loadSettings(); s.hapticFeedback = !s.hapticFeedback; saveSettings(s);
+    const btn = document.getElementById('s-haptic-toggle'); if (btn) btn.classList.toggle('on', s.hapticFeedback);
+}
+function onSettingsOrbSkin(skin) {
+    const s = loadSettings(); s.orbSkin = skin; saveSettings(s);
+    document.body.classList.remove('skin-flat', 'skin-numbered');
+    if (skin === 'flat') document.body.classList.add('skin-flat');
+    else if (skin === 'numbered') document.body.classList.add('skin-numbered');
+    document.querySelectorAll('.orb-skin-btn').forEach(b => b.classList.toggle('active', b.dataset.skin === skin));
+    markAllDirty(); if (S.grid) renderAll();
+}
+function onSettingsKeepAwake() {
+    const s = loadSettings(); s.keepAwake = !s.keepAwake; saveSettings(s);
+    const btn = document.getElementById('s-keepawake-toggle'); if (btn) btn.classList.toggle('on', s.keepAwake);
+    if (s.keepAwake) requestWakeLock(); else releaseWakeLock();
+}
+
+
+
+/* ══════════════════════════════════════════════════════════════════
+   HAPTIC FEEDBACK
+   ══════════════════════════════════════════════════════════════════ */
+function triggerHaptic(pattern) {
+    try {
+        const s = loadSettings();
+        if (s.hapticFeedback === false) return;
+        if (navigator.vibrate) navigator.vibrate(pattern);
+    } catch (e) {}
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   KEEP SCREEN AWAKE (Wake Lock API)
+   ══════════════════════════════════════════════════════════════════ */
+let _wakeLock = null;
+async function requestWakeLock() {
+    try {
+        const s = loadSettings();
+        if (s.keepAwake === false || !navigator.wakeLock) return;
+        if (_wakeLock) return;
+        _wakeLock = await navigator.wakeLock.request('screen');
+        _wakeLock.addEventListener('release', () => { _wakeLock = null; });
+    } catch (e) { _wakeLock = null; }
+}
+function releaseWakeLock() {
+    if (_wakeLock) { _wakeLock.release().catch(() => {}); _wakeLock = null; }
+}
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && document.getElementById('game').style.display !== 'none') {
+        requestWakeLock();
+    }
+});
 
 function triggerShake(comboStep, unstableCount) {
     if (lowGfx || !screenShake) return;
@@ -1155,7 +1243,7 @@ function deserializeState(data) {
    ══════════════════════════════════════════════════════════════════ */
 function startGame() {
     if (ballOrder.length < 2) return;
-    PCOLORS = ballOrder.map(i => ALL_COLORS[i]);
+    PCOLORS = ballOrder.map(i => ballColors[i]);
     PNAMES = ballOrder.map(i => ALL_NAMES[i]);
     IS_AI = ballOrder.map(i => ballModes[i] === 2 || ballModes[i] === 3);
     IS_HARD_AI = ballOrder.map(i => ballModes[i] === 3);
@@ -1174,6 +1262,7 @@ function startGame() {
     syncUndoBtn();
     if (IS_AI[0]) scheduleAiTurn();
     else setGridInteractive(true);
+    requestWakeLock();
 }
 
 function initState() {
@@ -1238,6 +1327,8 @@ function cellEl(r, c) { return document.querySelector(`#grid .cell[data-r="${r}"
 function buildGridDOM() {
     const g = document.getElementById('grid');
     g.innerHTML = '';
+    g.classList.add('grid-entering');
+    setTimeout(() => g.classList.remove('grid-entering'), 800);
     const maxW = Math.min(window.innerWidth - 24, 720);
     const maxH = window.innerHeight - 230;
     const szW = Math.floor((maxW - 16 - (cfg.cols - 1) * 2) / cfg.cols);
@@ -1251,6 +1342,7 @@ function buildGridDOM() {
             el.dataset.r = r; el.dataset.c = c;
             el.style.width = el.style.height = sz + 'px';
             el.innerHTML = '<div class="orb-layer"></div>';
+            el.style.animationDelay = `${(r + c) * 22}ms`;
             el.addEventListener('click', () => handleClick(r, c));
             g.appendChild(el);
         }
@@ -1411,9 +1503,10 @@ function renderCell(r, c) {
         ring.appendChild(makeOrbEl(col, orbSz, dx * posScale, dy * posScale, wobbleStagger[i])));
     layer.appendChild(ring);
 
-    if (surviving > 3) {
+    {
         const badge = document.createElement('div');
-        badge.style.cssText = `position:absolute;right:2px;bottom:2px;font-size:${Math.max(8, Math.floor(cellSz * .16))}px;color:${col};font-family:'Orbitron',sans-serif;font-weight:700;text-shadow:0 0 4px ${col};pointer-events:none;line-height:1;`;
+        badge.className = 'orb-count-badge' + (surviving > 3 ? ' always-show' : '');
+        badge.style.cssText = `font-size:${Math.max(8, Math.floor(cellSz * .18))}px;color:${col};font-family:'Orbitron',sans-serif;font-weight:700;text-shadow:0 0 4px ${col};pointer-events:none;line-height:1;`;
         badge.textContent = surviving;
         layer.appendChild(badge);
     }
@@ -1747,6 +1840,7 @@ async function handleClick(r, c) {
 
     const willExplodeImmediately = cell.count >= critMass(r, c);
     if (window.sfxPlace && !willExplodeImmediately) sfxPlace();
+    triggerHaptic(12);
     chainCandidates = new Set(); if (willExplodeImmediately) chainCandidates.add(r * 100 + c);
     markDirty(r, c); renderAll();
     try {
@@ -1860,6 +1954,7 @@ async function chainReact(session) {
             }
         });
         if (window.sfxExplode) sfxExplode(unstable.length);
+        triggerHaptic(22);
 
         triggerShake(comboCount, unstable.length);
         pulseAmbient(PCOLORS[S.current], comboCount + unstable.length);
@@ -1932,6 +2027,8 @@ function undoMove() {
     else setGridInteractive(true);
 }
 
+
+
 /* ══════════════════════════════════════════════════════════════════
    WIN
    ══════════════════════════════════════════════════════════════════ */
@@ -1948,6 +2045,7 @@ function showWin(idx) {
     box.style.boxShadow = `0 0 36px ${col}33`;
     document.getElementById('win-overlay').classList.add('show');
     if (window.sfxWin) sfxWin();
+    triggerHaptic([60, 40, 120]);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1985,10 +2083,12 @@ function goSetup() {
     document.getElementById('setup').style.display = 'flex';
     if (window.moveMusicPlayer) window.moveMusicPlayer('setup');
 
+    releaseWakeLock();
     history = [];
     hideCombo(true);
     ballModes.fill(0);
     ballOrder.length = 0;
+    ballColors.forEach((_, i) => { ballColors[i] = ALL_COLORS[i]; });
     syncBallGrid();
 }
 
@@ -2044,6 +2144,49 @@ function darken(hex, a) {
         if (!active.contains(e.target) && active !== e.target) active.blur();
     }, { passive: true });
 })();
+
+
+/* ══════════════════════════════════════════════════════════════════
+   BACK BUTTON / LEAVE CONFIRM
+   ══════════════════════════════════════════════════════════════════ */
+(function () {
+    // Push a dummy history entry so we intercept the Android/browser back gesture
+    if (window.history && window.history.pushState) {
+        window.history.pushState({ cr: true }, '');
+    }
+    window.addEventListener('popstate', function () {
+        handleBackButton();
+        if (window.history && window.history.pushState) {
+            window.history.pushState({ cr: true }, '');
+        }
+    });
+    // Capacitor Android native back button
+    document.addEventListener('backbutton', function (e) {
+        if (e && e.preventDefault) e.preventDefault();
+        handleBackButton();
+    }, false);
+})();
+
+function handleBackButton() {
+    const game   = document.getElementById('game');
+    const lobby  = document.getElementById('online-lobby');
+    const inGame = game && game.style.display !== 'none';
+    const inLobby = lobby && lobby.classList.contains('show');
+
+    if (inGame && !S.over) {
+        const msg = onlineMode
+            ? 'Leave the game? You will disconnect from the room.'
+            : 'Leave the game? Your progress will be lost.';
+        if (window.confirm(msg)) {
+            if (onlineMode) leaveRoom();
+            else goSetup();
+        }
+    } else if (inGame && S.over) {
+        goSetup();
+    } else if (inLobby) {
+        leaveRoom();
+    }
+}
 
 /* ── Apply saved settings on load ── */
 (function () {

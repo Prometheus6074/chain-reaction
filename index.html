@@ -236,7 +236,7 @@
     <div class="wname" id="wname"></div>
     <div class="wsub">All opponents eliminated</div>
     <div class="win-btns">
-      <button class="cta-btn cta-p" onclick="restartGame()">Play Again</button>
+      <button class="cta-btn cta-p" onclick="restartGame()">Rematch</button>
       <button class="cta-btn cta-s" id="win-new-game-btn" onclick="confirmNewGame(this)">New Game</button>
     </div>
   </div>
@@ -298,152 +298,127 @@
       <button class="s-toggle" id="s-shake-toggle" onclick="onSettingsScreenShake()" aria-label="Toggle screen shake"></button>
     </div>
 
+    <div class="settings-row">
+      <div class="settings-row-left">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="9"/></svg>
+        <span>Orb Style</span>
+      </div>
+      <div class="skin-picker">
+        <button class="orb-skin-btn active" data-skin="glow" onclick="onSettingsOrbSkin('glow')">Glow</button>
+        <button class="orb-skin-btn" data-skin="flat" onclick="onSettingsOrbSkin('flat')">Flat</button>
+        <button class="orb-skin-btn" data-skin="numbered" onclick="onSettingsOrbSkin('numbered')">Number</button>
+      </div>
+    </div>
+
+    <div class="settings-section-label">Device</div>
+
+    <div class="settings-row">
+      <div class="settings-row-left">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z"/><path d="M12 6v6l4 2"/></svg>
+        <span>Keep Screen On</span>
+      </div>
+      <button class="s-toggle" id="s-keepawake-toggle" onclick="onSettingsKeepAwake()" aria-label="Toggle keep awake"></button>
+    </div>
+
+    <div class="settings-row">
+      <div class="settings-row-left">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 8 2 2-2 2 2 2-2 2"/><path d="m22 8-2 2 2 2-2 2 2 2"/><rect width="8" height="14" x="8" y="5" rx="1"/></svg>
+        <span>Haptic Feedback</span>
+      </div>
+      <button class="s-toggle" id="s-haptic-toggle" onclick="onSettingsHaptic()" aria-label="Toggle haptic feedback"></button>
+    </div>
+
   </div>
 </div>
 
 
 <script>
+/* ── Intro Screen ── */
 (function () {
     'use strict';
-
     const COLORS = ['#ff3355','#2a7fff','#1fd97a','#ffcc00','#cc44ff','#00ddff','#ff6633','#aaff33'];
+    const screen  = document.getElementById('intro-screen');
+    const canvas  = document.getElementById('intro-canvas');
+    const ctx     = canvas.getContext('2d');
+    let W, H, orbs = [], raf, dismissed = false, tapReady = false;
 
-    const screen = document.getElementById('intro-screen');
-    const canvas = document.getElementById('intro-canvas');
-    const ctx    = canvas.getContext('2d');
-    let   W, H, orbs = [], raf, dismissed = false;
-
-    function resize() {
-        W = canvas.width  = window.innerWidth;
-        H = canvas.height = window.innerHeight;
-    }
+    function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
     resize();
     window.addEventListener('resize', resize);
 
-    /* ── Dream blobs — large slow drifting blurred circles ── */
     const DREAM_BLOBS = [
-        { color: '#ff3355', baseX: 0.15, baseY: 0.20, r: 0.38, speed: 0.00018, ox: 0.0,  oy: 0.0,  phase: 0.0  },
-        { color: '#2a7fff', baseX: 0.78, baseY: 0.65, r: 0.44, speed: 0.00014, ox: 1.2,  oy: 2.1,  phase: 1.3  },
-        { color: '#cc44ff', baseX: 0.50, baseY: 0.42, r: 0.36, speed: 0.00020, ox: 3.1,  oy: 0.8,  phase: 2.6  },
-        { color: '#1fd97a', baseX: 0.85, baseY: 0.18, r: 0.30, speed: 0.00016, ox: 5.0,  oy: 3.3,  phase: 0.8  },
-        { color: '#ffcc00', baseX: 0.10, baseY: 0.80, r: 0.32, speed: 0.00012, ox: 2.4,  oy: 1.6,  phase: 4.1  },
+        { color:'#ff3355', bx:0.15, by:0.20, r:0.38, spd:0.00018, ph:0.0 },
+        { color:'#2a7fff', bx:0.78, by:0.65, r:0.44, spd:0.00014, ph:1.3 },
+        { color:'#cc44ff', bx:0.50, by:0.42, r:0.36, spd:0.00020, ph:2.6 },
+        { color:'#1fd97a', bx:0.85, by:0.18, r:0.30, spd:0.00016, ph:0.8 },
+        { color:'#ffcc00', bx:0.10, by:0.80, r:0.32, spd:0.00012, ph:4.1 },
     ];
-
     function drawDreamBlobs(now) {
-        // Draw blobs with heavy blur — save/restore around filter for perf
         for (const b of DREAM_BLOBS) {
-            const t  = now * b.speed;
-            const dx = Math.sin(t + b.phase)        * 0.12 * W;
-            const dy = Math.cos(t * 0.7 + b.phase)  * 0.10 * H;
-            const x  = b.baseX * W + dx;
-            const y  = b.baseY * H + dy;
-            const r  = b.r * Math.min(W, H);
-
-            // Gentle breathe
-            const scale = 1 + 0.06 * Math.sin(t * 1.3 + b.phase);
-
-            ctx.save();
-            ctx.filter = 'blur(70px)';
-            const grd = ctx.createRadialGradient(x, y, 0, x, y, r * scale);
-            grd.addColorStop(0, b.color + '28'); // ~16% opacity
-            grd.addColorStop(1, b.color + '00');
-            ctx.beginPath();
-            ctx.arc(x, y, r * scale, 0, Math.PI * 2);
-            ctx.fillStyle = grd;
-            ctx.fill();
-            ctx.restore();
+            const t = now * b.spd;
+            const x = b.bx * W + Math.sin(t + b.ph)       * 0.13 * W;
+            const y = b.by * H + Math.cos(t * 0.7 + b.ph) * 0.11 * H;
+            const r = b.r  * Math.min(W, H) * (1 + 0.06 * Math.sin(t * 1.3 + b.ph));
+            ctx.save(); ctx.filter = 'blur(70px)';
+            const grd = ctx.createRadialGradient(x, y, 0, x, y, r);
+            grd.addColorStop(0, b.color + '28'); grd.addColorStop(1, b.color + '00');
+            ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fillStyle = grd; ctx.fill(); ctx.restore();
         }
     }
 
-    /* ── Small orb burst ── */
     function spawnOrbs() {
         orbs = [];
-        const cx = W / 2, cy = H / 2;
-        const count = 26;
+        const cx = W / 2, cy = H / 2, count = 26;
         for (let i = 0; i < count; i++) {
-            const angle  = (i / count) * Math.PI * 2 + Math.random() * 0.4;
-            const speed  = 0.6 + Math.random() * 1.4;
-            const radius = 7 + Math.random() * 9;
-            const color  = COLORS[i % COLORS.length];
-            const delay  = Math.random() * 0.6;
-            orbs.push({
-                x: cx, y: cy,
-                vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed,
-                r: radius, color,
-                alpha: 0,
-                born: performance.now() + delay * 1000,
-                trail: []
-            });
+            const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+            const speed = 0.6 + Math.random() * 1.4;
+            orbs.push({ x:cx, y:cy, vx:Math.cos(angle)*speed, vy:Math.sin(angle)*speed,
+                r:7+Math.random()*9, color:COLORS[i%COLORS.length], alpha:0,
+                born:performance.now()+Math.random()*600, trail:[] });
         }
     }
-
     function drawOrb(o) {
         if (o.alpha <= 0) return;
         for (let i = 0; i < o.trail.length; i++) {
-            const t  = o.trail[i];
-            const ta = (i / o.trail.length) * o.alpha * 0.22;
-            ctx.beginPath();
-            ctx.arc(t.x, t.y, o.r * 0.5, 0, Math.PI * 2);
-            ctx.fillStyle = o.color + Math.round(ta * 255).toString(16).padStart(2, '0');
-            ctx.fill();
+            const t = o.trail[i], ta = (i/o.trail.length)*o.alpha*0.22;
+            ctx.beginPath(); ctx.arc(t.x, t.y, o.r*0.5, 0, Math.PI*2);
+            ctx.fillStyle = o.color + Math.round(ta*255).toString(16).padStart(2,'0'); ctx.fill();
         }
-        const grd = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, o.r * 2.5);
-        grd.addColorStop(0, o.color + Math.round(o.alpha * 180).toString(16).padStart(2, '0'));
-        grd.addColorStop(1, o.color + '00');
-        ctx.beginPath();
-        ctx.arc(o.x, o.y, o.r * 2.5, 0, Math.PI * 2);
-        ctx.fillStyle = grd;
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
-        ctx.fillStyle = o.color + Math.round(o.alpha * 255).toString(16).padStart(2, '0');
-        ctx.fill();
+        const grd = ctx.createRadialGradient(o.x,o.y,0,o.x,o.y,o.r*2.5);
+        grd.addColorStop(0, o.color+Math.round(o.alpha*180).toString(16).padStart(2,'0'));
+        grd.addColorStop(1, o.color+'00');
+        ctx.beginPath(); ctx.arc(o.x,o.y,o.r*2.5,0,Math.PI*2); ctx.fillStyle=grd; ctx.fill();
+        ctx.beginPath(); ctx.arc(o.x,o.y,o.r,0,Math.PI*2);
+        ctx.fillStyle=o.color+Math.round(o.alpha*255).toString(16).padStart(2,'0'); ctx.fill();
     }
 
-    const LOGO_FADE_IN = 800;
-    const ORB_FADE_IN  = 400;
-    let startTime = null, tapReady = false;
-
+    const LOGO_FADE_IN = 800, ORB_FADE_IN = 400;
+    let startTime = null;
     function tick(now) {
         if (!startTime) startTime = now;
         const elapsed = now - startTime;
-
         ctx.clearRect(0, 0, W, H);
-
-        // 1. Dream blobs (background, always animating)
         drawDreamBlobs(now);
-
-        // 2. Orb burst (one-shot)
         for (const o of orbs) {
             if (now < o.born) continue;
-            const age = now - o.born;
-            o.alpha = Math.min(1, age / ORB_FADE_IN);
-            o.trail.push({ x: o.x, y: o.y });
-            if (o.trail.length > 8) o.trail.shift();
-            o.x  += o.vx;
-            o.y  += o.vy;
-            o.vy += 0.012;
+            o.alpha = Math.min(1, (now - o.born) / ORB_FADE_IN);
+            o.trail.push({x:o.x, y:o.y}); if (o.trail.length > 8) o.trail.shift();
+            o.x += o.vx; o.y += o.vy; o.vy += 0.012;
             drawOrb(o);
         }
-
-        // 3. Logo fade in
         const logoEl = document.getElementById('intro-logo');
         logoEl.style.opacity = Math.min(1, elapsed / LOGO_FADE_IN);
-
-        // 4. "tap to start" pulse
         const tapEl = document.getElementById('intro-tap');
         if (elapsed > LOGO_FADE_IN + 200) {
             tapEl.style.opacity = 0.4 + 0.35 * Math.sin(elapsed / 500);
             tapReady = true;
         }
-
         raf = requestAnimationFrame(tick);
     }
 
     function dismiss() {
-        if (dismissed) return;
-        dismissed = true;
+        if (dismissed) return; dismissed = true;
         cancelAnimationFrame(raf);
         screen.style.opacity = '0';
         screen.style.pointerEvents = 'none';
@@ -451,61 +426,41 @@
         if (window.moveMusicPlayer) window.moveMusicPlayer('setup');
         setTimeout(() => { screen.style.display = 'none'; }, 520);
     }
-
-    function onTap() {
-        screen.style.transition = 'opacity 0.4s ease';
-        dismiss();
-    }
-
-    screen.addEventListener('click',      onTap);
-    screen.addEventListener('touchstart', onTap, { passive: true });
+    screen.addEventListener('click',      () => { screen.style.transition='opacity 0.4s ease'; dismiss(); });
+    screen.addEventListener('touchstart', () => { screen.style.transition='opacity 0.4s ease'; dismiss(); }, {passive:true});
 
     spawnOrbs();
     raf = requestAnimationFrame(tick);
 })();
 </script>
 
-
 <script>
-/* ── Persistent dream-blob background (replaces CSS bg-orbs on all screens) ── */
+/* ── Persistent dream-blob background ── */
 (function () {
     'use strict';
     const BLOBS = [
-        { color: '#ff3355', bx: 0.15, by: 0.20, r: 0.38, spd: 0.00018, ph: 0.0  },
-        { color: '#2a7fff', bx: 0.78, by: 0.65, r: 0.44, spd: 0.00014, ph: 1.3  },
-        { color: '#cc44ff', bx: 0.50, by: 0.42, r: 0.36, spd: 0.00020, ph: 2.6  },
-        { color: '#1fd97a', bx: 0.85, by: 0.18, r: 0.30, spd: 0.00016, ph: 0.8  },
-        { color: '#ffcc00', bx: 0.10, by: 0.80, r: 0.32, spd: 0.00012, ph: 4.1  },
+        { color:'#ff3355', bx:0.15, by:0.20, r:0.38, spd:0.00018, ph:0.0 },
+        { color:'#2a7fff', bx:0.78, by:0.65, r:0.44, spd:0.00014, ph:1.3 },
+        { color:'#cc44ff', bx:0.50, by:0.42, r:0.36, spd:0.00020, ph:2.6 },
+        { color:'#1fd97a', bx:0.85, by:0.18, r:0.30, spd:0.00016, ph:0.8 },
+        { color:'#ffcc00', bx:0.10, by:0.80, r:0.32, spd:0.00012, ph:4.1 },
     ];
-
     const canvas = document.getElementById('bg-canvas');
     const ctx    = canvas.getContext('2d');
     let W, H;
-
-    function resize() {
-        W = canvas.width  = window.innerWidth;
-        H = canvas.height = window.innerHeight;
-    }
-    resize();
-    window.addEventListener('resize', resize);
-
+    function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+    resize(); window.addEventListener('resize', resize);
     function tick(now) {
         ctx.clearRect(0, 0, W, H);
         for (const b of BLOBS) {
-            const t  = now * b.spd;
-            const x  = b.bx * W + Math.sin(t + b.ph)       * 0.13 * W;
-            const y  = b.by * H + Math.cos(t * 0.7 + b.ph) * 0.11 * H;
-            const r  = b.r  * Math.min(W, H) * (1 + 0.06 * Math.sin(t * 1.3 + b.ph));
-            ctx.save();
-            ctx.filter = 'blur(70px)';
-            const grd = ctx.createRadialGradient(x, y, 0, x, y, r);
-            grd.addColorStop(0, b.color + '28');
-            grd.addColorStop(1, b.color + '00');
-            ctx.beginPath();
-            ctx.arc(x, y, r, 0, Math.PI * 2);
-            ctx.fillStyle = grd;
-            ctx.fill();
-            ctx.restore();
+            const t = now * b.spd;
+            const x = b.bx*W + Math.sin(t+b.ph)*0.13*W;
+            const y = b.by*H + Math.cos(t*0.7+b.ph)*0.11*H;
+            const r = b.r*Math.min(W,H)*(1+0.06*Math.sin(t*1.3+b.ph));
+            ctx.save(); ctx.filter='blur(70px)';
+            const grd = ctx.createRadialGradient(x,y,0,x,y,r);
+            grd.addColorStop(0, b.color+'28'); grd.addColorStop(1, b.color+'00');
+            ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fillStyle=grd; ctx.fill(); ctx.restore();
         }
         requestAnimationFrame(tick);
     }
