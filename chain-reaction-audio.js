@@ -17,7 +17,7 @@
 
     function savedMusicVol() {
         try { const s = JSON.parse(localStorage.getItem('cr_settings') || '{}');
-              return (s.musicVol !== undefined ? s.musicVol : 25) / 100; }
+              return (s.musicVol !== undefined ? s.musicVol : 50) / 100; }
         catch (e) { return 0.5; }
     }
 
@@ -62,6 +62,7 @@
         if (pendingKey) { const k = pendingKey; pendingKey = null; currentKey = null; switchTo(k); }
     }
     ['touchstart','mousedown','keydown'].forEach(e => document.addEventListener(e, unlock, {once:true,passive:true}));
+    window._crAudioUnlock = unlock; // exposed for intro screen
 
     window.moveMusicPlayer = function (screen) {
         const key = screenToKey(screen);

@@ -13,14 +13,17 @@
 
 </head>
 <body>
-<div id="ambient-layer"></div>
-<div id="bg-orbs" aria-hidden="true">
-    <div class="bg-orb" style="--c:#ff3355;--x:15%;--y:20%;--s:520px;--d:18s;--delay:-4s"></div>
-    <div class="bg-orb" style="--c:#2a7fff;--x:75%;--y:65%;--s:600px;--d:22s;--delay:-11s"></div>
-    <div class="bg-orb" style="--c:#cc44ff;--x:50%;--y:45%;--s:480px;--d:26s;--delay:-7s"></div>
-    <div class="bg-orb" style="--c:#1fd97a;--x:85%;--y:15%;--s:380px;--d:20s;--delay:-2s"></div>
-    <div class="bg-orb" style="--c:#ffcc00;--x:10%;--y:80%;--s:420px;--d:24s;--delay:-15s"></div>
+<!-- ══ INTRO SCREEN ══ -->
+<div id="intro-screen">
+  <canvas id="intro-canvas"></canvas>
+  <div id="intro-logo">
+    <div id="intro-title">Chain Reaction</div>
+    <div id="intro-tap">tap to start</div>
+  </div>
 </div>
+
+<div id="ambient-layer"></div>
+<canvas id="bg-canvas" aria-hidden="true"></canvas>
 
 <!-- ══ SETUP ══ -->
 <div id="setup">
@@ -298,5 +301,216 @@
   </div>
 </div>
 
+
+<script>
+(function () {
+    'use strict';
+
+    const COLORS = ['#ff3355','#2a7fff','#1fd97a','#ffcc00','#cc44ff','#00ddff','#ff6633','#aaff33'];
+
+    const screen = document.getElementById('intro-screen');
+    const canvas = document.getElementById('intro-canvas');
+    const ctx    = canvas.getContext('2d');
+    let   W, H, orbs = [], raf, dismissed = false;
+
+    function resize() {
+        W = canvas.width  = window.innerWidth;
+        H = canvas.height = window.innerHeight;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    /* ── Dream blobs — large slow drifting blurred circles ── */
+    const DREAM_BLOBS = [
+        { color: '#ff3355', baseX: 0.15, baseY: 0.20, r: 0.38, speed: 0.00018, ox: 0.0,  oy: 0.0,  phase: 0.0  },
+        { color: '#2a7fff', baseX: 0.78, baseY: 0.65, r: 0.44, speed: 0.00014, ox: 1.2,  oy: 2.1,  phase: 1.3  },
+        { color: '#cc44ff', baseX: 0.50, baseY: 0.42, r: 0.36, speed: 0.00020, ox: 3.1,  oy: 0.8,  phase: 2.6  },
+        { color: '#1fd97a', baseX: 0.85, baseY: 0.18, r: 0.30, speed: 0.00016, ox: 5.0,  oy: 3.3,  phase: 0.8  },
+        { color: '#ffcc00', baseX: 0.10, baseY: 0.80, r: 0.32, speed: 0.00012, ox: 2.4,  oy: 1.6,  phase: 4.1  },
+    ];
+
+    function drawDreamBlobs(now) {
+        // Draw blobs with heavy blur — save/restore around filter for perf
+        for (const b of DREAM_BLOBS) {
+            const t  = now * b.speed;
+            const dx = Math.sin(t + b.phase)        * 0.12 * W;
+            const dy = Math.cos(t * 0.7 + b.phase)  * 0.10 * H;
+            const x  = b.baseX * W + dx;
+            const y  = b.baseY * H + dy;
+            const r  = b.r * Math.min(W, H);
+
+            // Gentle breathe
+            const scale = 1 + 0.06 * Math.sin(t * 1.3 + b.phase);
+
+            ctx.save();
+            ctx.filter = 'blur(70px)';
+            const grd = ctx.createRadialGradient(x, y, 0, x, y, r * scale);
+            grd.addColorStop(0, b.color + '28'); // ~16% opacity
+            grd.addColorStop(1, b.color + '00');
+            ctx.beginPath();
+            ctx.arc(x, y, r * scale, 0, Math.PI * 2);
+            ctx.fillStyle = grd;
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+
+    /* ── Small orb burst ── */
+    function spawnOrbs() {
+        orbs = [];
+        const cx = W / 2, cy = H / 2;
+        const count = 26;
+        for (let i = 0; i < count; i++) {
+            const angle  = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+            const speed  = 0.6 + Math.random() * 1.4;
+            const radius = 7 + Math.random() * 9;
+            const color  = COLORS[i % COLORS.length];
+            const delay  = Math.random() * 0.6;
+            orbs.push({
+                x: cx, y: cy,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                r: radius, color,
+                alpha: 0,
+                born: performance.now() + delay * 1000,
+                trail: []
+            });
+        }
+    }
+
+    function drawOrb(o) {
+        if (o.alpha <= 0) return;
+        for (let i = 0; i < o.trail.length; i++) {
+            const t  = o.trail[i];
+            const ta = (i / o.trail.length) * o.alpha * 0.22;
+            ctx.beginPath();
+            ctx.arc(t.x, t.y, o.r * 0.5, 0, Math.PI * 2);
+            ctx.fillStyle = o.color + Math.round(ta * 255).toString(16).padStart(2, '0');
+            ctx.fill();
+        }
+        const grd = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, o.r * 2.5);
+        grd.addColorStop(0, o.color + Math.round(o.alpha * 180).toString(16).padStart(2, '0'));
+        grd.addColorStop(1, o.color + '00');
+        ctx.beginPath();
+        ctx.arc(o.x, o.y, o.r * 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = grd;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
+        ctx.fillStyle = o.color + Math.round(o.alpha * 255).toString(16).padStart(2, '0');
+        ctx.fill();
+    }
+
+    const LOGO_FADE_IN = 800;
+    const ORB_FADE_IN  = 400;
+    let startTime = null, tapReady = false;
+
+    function tick(now) {
+        if (!startTime) startTime = now;
+        const elapsed = now - startTime;
+
+        ctx.clearRect(0, 0, W, H);
+
+        // 1. Dream blobs (background, always animating)
+        drawDreamBlobs(now);
+
+        // 2. Orb burst (one-shot)
+        for (const o of orbs) {
+            if (now < o.born) continue;
+            const age = now - o.born;
+            o.alpha = Math.min(1, age / ORB_FADE_IN);
+            o.trail.push({ x: o.x, y: o.y });
+            if (o.trail.length > 8) o.trail.shift();
+            o.x  += o.vx;
+            o.y  += o.vy;
+            o.vy += 0.012;
+            drawOrb(o);
+        }
+
+        // 3. Logo fade in
+        const logoEl = document.getElementById('intro-logo');
+        logoEl.style.opacity = Math.min(1, elapsed / LOGO_FADE_IN);
+
+        // 4. "tap to start" pulse
+        const tapEl = document.getElementById('intro-tap');
+        if (elapsed > LOGO_FADE_IN + 200) {
+            tapEl.style.opacity = 0.4 + 0.35 * Math.sin(elapsed / 500);
+            tapReady = true;
+        }
+
+        raf = requestAnimationFrame(tick);
+    }
+
+    function dismiss() {
+        if (dismissed) return;
+        dismissed = true;
+        cancelAnimationFrame(raf);
+        screen.style.opacity = '0';
+        screen.style.pointerEvents = 'none';
+        if (window._crAudioUnlock) window._crAudioUnlock();
+        if (window.moveMusicPlayer) window.moveMusicPlayer('setup');
+        setTimeout(() => { screen.style.display = 'none'; }, 520);
+    }
+
+    function onTap() {
+        screen.style.transition = 'opacity 0.4s ease';
+        dismiss();
+    }
+
+    screen.addEventListener('click',      onTap);
+    screen.addEventListener('touchstart', onTap, { passive: true });
+
+    spawnOrbs();
+    raf = requestAnimationFrame(tick);
+})();
+</script>
+
+
+<script>
+/* ── Persistent dream-blob background (replaces CSS bg-orbs on all screens) ── */
+(function () {
+    'use strict';
+    const BLOBS = [
+        { color: '#ff3355', bx: 0.15, by: 0.20, r: 0.38, spd: 0.00018, ph: 0.0  },
+        { color: '#2a7fff', bx: 0.78, by: 0.65, r: 0.44, spd: 0.00014, ph: 1.3  },
+        { color: '#cc44ff', bx: 0.50, by: 0.42, r: 0.36, spd: 0.00020, ph: 2.6  },
+        { color: '#1fd97a', bx: 0.85, by: 0.18, r: 0.30, spd: 0.00016, ph: 0.8  },
+        { color: '#ffcc00', bx: 0.10, by: 0.80, r: 0.32, spd: 0.00012, ph: 4.1  },
+    ];
+
+    const canvas = document.getElementById('bg-canvas');
+    const ctx    = canvas.getContext('2d');
+    let W, H;
+
+    function resize() {
+        W = canvas.width  = window.innerWidth;
+        H = canvas.height = window.innerHeight;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    function tick(now) {
+        ctx.clearRect(0, 0, W, H);
+        for (const b of BLOBS) {
+            const t  = now * b.spd;
+            const x  = b.bx * W + Math.sin(t + b.ph)       * 0.13 * W;
+            const y  = b.by * H + Math.cos(t * 0.7 + b.ph) * 0.11 * H;
+            const r  = b.r  * Math.min(W, H) * (1 + 0.06 * Math.sin(t * 1.3 + b.ph));
+            ctx.save();
+            ctx.filter = 'blur(70px)';
+            const grd = ctx.createRadialGradient(x, y, 0, x, y, r);
+            grd.addColorStop(0, b.color + '28');
+            grd.addColorStop(1, b.color + '00');
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, Math.PI * 2);
+            ctx.fillStyle = grd;
+            ctx.fill();
+            ctx.restore();
+        }
+        requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+})();
+</script>
 </body>
 </html>
