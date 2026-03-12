@@ -173,11 +173,29 @@ function syncGridBtns() {
    ══════════════════════════════════════════════════════════════════ */
 
 /* ── Step-panel helpers ── */
+// Map panel id → the input to auto-focus when that panel is shown (Android keyboard fix)
+const OL_PANEL_FOCUS = {
+    'ol-username':   'ol-username-input',
+    'ol-join-panel': 'ol-code-input',
+};
+
 function showOlPanel(id) {
+    // Dismiss keyboard from any currently-focused input before switching panels
+    if (document.activeElement && document.activeElement.tagName === 'INPUT') {
+        document.activeElement.blur();
+    }
     ['ol-username', 'ol-mode', 'ol-create', 'ol-join-panel', 'ol-waiting', 'ol-random-join'].forEach(p => {
         const el = document.getElementById(p);
         if (el) el.style.display = p === id ? 'flex' : 'none';
     });
+    // Auto-focus the primary input for this panel so Android keyboard opens on first tap
+    const focusId = OL_PANEL_FOCUS[id];
+    if (focusId) {
+        setTimeout(() => {
+            const inp = document.getElementById(focusId);
+            if (inp) inp.focus();
+        }, 80);
+    }
 }
 
 function showOnlineLobby() {
@@ -1969,3 +1987,17 @@ window.addEventListener('resize', () => {
         }
     }, 200);
 });
+
+/* ── Android keyboard dismiss: tap outside any input in the online lobby ── */
+(function () {
+    const lobby = document.getElementById('online-lobby');
+    if (!lobby) return;
+    lobby.addEventListener('touchstart', function (e) {
+        const active = document.activeElement;
+        if (!active || active.tagName !== 'INPUT') return;
+        // If the touch target is outside the currently-focused input, blur it
+        if (!active.contains(e.target) && active !== e.target) {
+            active.blur();
+        }
+    }, { passive: true });
+})();
