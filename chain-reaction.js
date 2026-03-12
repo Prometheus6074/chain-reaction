@@ -54,6 +54,17 @@ let comboCount = 0;
 let chainCandidates = new Set();
 let comboHideTimer = null;
 
+/* ── Game mode flags ── */
+let timedMode    = false;   // per-player countdown clock
+let timedSeconds = 180;     // default 3 min per player
+let fogOfWar     = false;   // only show cells visible to current player
+let playerTimers = [];      // remaining ms per player
+let _timedInterval = null;
+
+/* ── Match stats ── */
+let matchStats = { totalTurns: 0, maxCombo: 0, maxComboPlayer: -1 };
+function resetMatchStats() { matchStats = { totalTurns: 0, maxCombo: 0, maxComboPlayer: -1 }; }
+
 /* ══════════════════════════════════════════════════════════════════
    FIREBASE / ONLINE STATE
    ══════════════════════════════════════════════════════════════════ */
@@ -654,9 +665,30 @@ function showPlayerLeftSide(name, color) {
     leftSideTimer = setTimeout(() => panel.classList.remove('visible'), 3500);
 }
 
+/* ── Elimination animation: flash + implode cells before wiping ── */
+function animateElimination(playerIndex, onDone) {
+    const cells = [];
+    for (let r = 0; r < cfg.rows; r++)
+        for (let c = 0; c < cfg.cols; c++)
+            if (S.grid[r][c].owner === playerIndex) {
+                const el = cellEl(r, c);
+                if (el) cells.push(el);
+            }
+    if (!cells.length || lowGfx) { onDone(); return; }
+    cells.forEach(el => el.classList.add('elim-flash'));
+    setTimeout(() => {
+        cells.forEach(el => { el.classList.remove('elim-flash'); el.classList.add('elim-shrink'); });
+        setTimeout(() => {
+            cells.forEach(el => el.classList.remove('elim-shrink'));
+            onDone();
+        }, 350);
+    }, 280);
+}
+
 /* ── Handle a player disconnect: eliminate them, wipe orbs, advance turn ── */
 function handlePlayerDisconnect(playerIndex) {
     if (!S || S.over) return;
+    animateElimination(playerIndex, () => {
     // Wipe all their orbs from the board
     for (let r = 0; r < cfg.rows; r++) {
         for (let c = 0; c < cfg.cols; c++) {
@@ -691,12 +723,11 @@ function handlePlayerDisconnect(playerIndex) {
 
     markAllDirty(); renderAll();
     if (onlineMode) {
-        // Reset the deadline so the next player gets a full 30 seconds,
-        // not the remaining time from the player who just left.
         if (!S.over) S.turnDeadline = serverNow() + TURN_TIMER_MS;
         pushStateToFirebase();
         updateOnlineInteractivity();
     }
+    }); // end animateElimination callback
 }
 
 function resetOnlineState() {
@@ -760,6 +791,7 @@ function setupChat() {
         if (!chatOpen) {
             chatUnreadCount++;
             updateChatUnread();
+            playChatPing();
         }
     });
 
@@ -819,6 +851,21 @@ function updateChatUnread() {
     } else {
         badge.style.display = 'none';
     }
+}
+
+function playChatPing() {
+    try {
+        const s = loadSettings();
+        if ((s.sfxVol || 0) === 0) return;
+        const ac = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ac.createOscillator();
+        const gain = ac.createGain();
+        osc.connect(gain); gain.connect(ac.destination);
+        osc.frequency.value = 880; osc.type = 'sine';
+        gain.gain.setValueAtTime((s.sfxVol / 100) * 0.15, ac.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.2);
+        osc.start(); osc.stop(ac.currentTime + 0.2);
+    } catch(e) {}
 }
 
 function sendChatMessage() {
@@ -1059,7 +1106,7 @@ function _forceOnlineMove() {
    SETTINGS — persisted to localStorage
    ══════════════════════════════════════════════════════════════════ */
 const SETTINGS_KEY = 'cr_settings';
-const SETTINGS_DEFAULTS = { musicVol: 50, sfxVol: 55, lowGfx: false, screenShake: true, hapticFeedback: true, orbSkin: 'glow', keepAwake: true };
+const SETTINGS_DEFAULTS = { musicVol: 50, sfxVol: 55, lowGfx: false, screenShake: true, hapticFeedback: true, orbSkin: 'glow', keepAwake: true, theme: 'dark' };
 
 function loadSettings() {
     try { return Object.assign({}, SETTINGS_DEFAULTS, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); }
@@ -1077,6 +1124,7 @@ function applySettings(s) {
     else if (s.orbSkin === 'numbered') document.body.classList.add('skin-numbered');
     if (window.setMusicVolume) window.setMusicVolume(s.musicVol / 100);
     if (window.setSfxVolume)   window.setSfxVolume(s.sfxVol / 100);
+    applyTheme(s.theme || 'dark');
     syncSettingsUI(s);
 }
 function syncSettingsUI(s) {
@@ -1098,6 +1146,8 @@ function syncSettingsUI(s) {
     if (kaw) kaw.classList.toggle('on', s.keepAwake !== false);
     document.querySelectorAll('.orb-skin-btn').forEach(b =>
         b.classList.toggle('active', b.dataset.skin === (s.orbSkin || 'glow')));
+    document.querySelectorAll('.theme-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.theme === (s.theme || 'dark')));
 }
 
 const _settings = loadSettings();
@@ -1158,6 +1208,32 @@ function onSettingsKeepAwake() {
 }
 
 
+
+/* ══════════════════════════════════════════════════════════════════
+   THEMES
+   ══════════════════════════════════════════════════════════════════ */
+const THEMES = {
+    dark:   { bg:'#07071a', surface:'#0e0e2a', card:'#12122e', border:'#2a2a5a', text:'#e8e8ff', dim:'#6060a0' },
+    amoled: { bg:'#000000', surface:'#0a0a0a', card:'#111111', border:'#222244', text:'#e8e8ff', dim:'#505080' },
+    light:  { bg:'#f0f0fa', surface:'#ffffff', card:'#f8f8ff', border:'#c0c0e0', text:'#111130', dim:'#7070a0' },
+};
+function applyTheme(name) {
+    const t = THEMES[name] || THEMES.dark;
+    const r = document.documentElement;
+    r.style.setProperty('--bg',      t.bg);
+    r.style.setProperty('--surface', t.surface);
+    r.style.setProperty('--card',    t.card);
+    r.style.setProperty('--border',  t.border);
+    r.style.setProperty('--text',    t.text);
+    r.style.setProperty('--dim',     t.dim);
+    document.body.dataset.theme = name;
+    document.querySelectorAll('.theme-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.theme === name));
+}
+function onSettingsTheme(name) {
+    const s = loadSettings(); s.theme = name; saveSettings(s);
+    applyTheme(name);
+}
 
 /* ══════════════════════════════════════════════════════════════════
    HAPTIC FEEDBACK
@@ -1287,6 +1363,7 @@ function startGame() {
     document.getElementById('game').style.display = 'flex';
     if (window.moveMusicPlayer) window.moveMusicPlayer('game-single');
     history = [];
+    resetMatchStats();
     initState();
     buildGridDOM();
     buildPlayerStrip();
@@ -1296,11 +1373,13 @@ function startGame() {
     if (IS_AI[0]) scheduleAiTurn();
     else setGridInteractive(true);
     requestWakeLock();
+    startPlayerTimer();
 }
 
 function initState() {
     gameSession++;
     window._orbAnimEpoch = Date.now();
+    playerTimers = timedMode ? new Array(PCOLORS.length).fill(timedSeconds * 1000) : [];
     S = {
         grid: Array.from({ length: cfg.rows }, () =>
             Array.from({ length: cfg.cols }, () => ({ owner: -1, count: 0 }))),
@@ -1398,7 +1477,8 @@ function buildPlayerStrip() {
         <span class="pc" id="porbs${i}">0</span>
         <span class="gain-badge" id="gb${i}"></span>
       </div>
-      <div class="pl">orbs</div>`;
+      <div class="pl">orbs</div>
+      <div class="ptimer" id="ptimer${i}" style="display:none"></div>`;
         strip.appendChild(card);
     }
 }
@@ -1508,6 +1588,13 @@ function renderCell(r, c) {
     layer.innerHTML = '';
     el.classList.remove('near-crit', 'cell-glow');
     el.style.removeProperty('--cell-glow-color');
+
+    // Fog of war
+    if (fogOfWar && !S.over && !onlineMode) {
+        el.classList.toggle('fog-hidden', !isCellVisible(r, c, S.current));
+    } else {
+        el.classList.remove('fog-hidden');
+    }
 
     if (data.count <= 0) return;
     const cm = critMass(r, c);
@@ -1798,6 +1885,81 @@ function scheduleAiTurn() {
 }
 
 /* ══════════════════════════════════════════════════════════════════
+   TIMED MODE — per-player countdown clocks
+   ══════════════════════════════════════════════════════════════════ */
+function startPlayerTimer() {
+    stopPlayerTimer();
+    if (!timedMode || S.over || onlineMode) return;
+    const idx = S.current;
+    let last = Date.now();
+    _timedInterval = setInterval(() => {
+        if (S.animating) { last = Date.now(); return; }
+        const now = Date.now();
+        playerTimers[idx] = Math.max(0, (playerTimers[idx] || 0) - (now - last));
+        last = now;
+        renderPlayerTimers();
+        if (playerTimers[idx] <= 0) {
+            stopPlayerTimer();
+            // Force a random legal move
+            const owned = [], empty = [];
+            for (let r = 0; r < cfg.rows; r++)
+                for (let c = 0; c < cfg.cols; c++) {
+                    const cell = S.grid[r][c];
+                    if (cell.owner === idx) owned.push({r, c});
+                    else if (cell.owner === -1) empty.push({r, c});
+                }
+            const pool = owned.length ? owned : empty;
+            if (pool.length) {
+                const pick = pool[Math.floor(Math.random() * pool.length)];
+                handleClick(pick.r, pick.c);
+            }
+        }
+    }, 100);
+}
+function stopPlayerTimer() {
+    if (_timedInterval) { clearInterval(_timedInterval); _timedInterval = null; }
+}
+function renderPlayerTimers() {
+    for (let i = 0; i < PCOLORS.length; i++) {
+        const el = document.getElementById(`ptimer${i}`);
+        if (!el) continue;
+        if (!timedMode) { el.style.display = 'none'; continue; }
+        const ms = playerTimers[i] ?? (timedSeconds * 1000);
+        const totalSec = Math.ceil(ms / 1000);
+        const m  = Math.floor(totalSec / 60);
+        const ss = String(totalSec % 60).padStart(2, '0');
+        el.textContent = `${m}:${ss}`;
+        el.style.display = '';
+        el.style.color = ms < 10000 ? '#ff3355' : ms < 30000 ? '#ffcc00' : PCOLORS[i];
+        el.classList.toggle('timer-urgent', ms < 10000);
+    }
+}
+
+/* ── Fog-of-war visibility check ── */
+function isCellVisible(r, c, player) {
+    if (S.grid[r][c].owner === player) return true;
+    for (const [nr, nc] of neighbors(r, c))
+        if (S.grid[nr][nc].owner === player) return true;
+    return false;
+}
+
+/* ── Game mode setters (called from HTML) ── */
+function setTimedMode(on) {
+    timedMode = on;
+    const row = document.getElementById('timed-seconds-row');
+    if (row) row.style.display = on ? 'flex' : 'none';
+}
+function setTimedSeconds(val) {
+    timedSeconds = parseInt(val) || 180;
+    const lbl = document.getElementById('timed-seconds-label');
+    if (lbl) {
+        const m = Math.floor(timedSeconds / 60), s = timedSeconds % 60;
+        lbl.textContent = s === 0 ? `${m} min` : `${m}m ${s}s`;
+    }
+}
+function setFogOfWar(on) { fogOfWar = on; }
+
+/* ══════════════════════════════════════════════════════════════════
    REMOTE MOVE PLAYBACK (online: animate other players' moves)
    ══════════════════════════════════════════════════════════════════ */
 async function playRemoteMove(r, c, finalData) {
@@ -1889,6 +2051,7 @@ async function handleClick(r, c) {
 
     if (S.over) {
         S.animating = false;
+        stopPlayerTimer();
         syncUndoBtn();
         setGridInteractive(false);
         if (onlineMode) { await pushStateToFirebase(); S.pendingMove = null; }
@@ -1902,18 +2065,17 @@ async function handleClick(r, c) {
         next = (next + 1) % PCOLORS.length;
     // Only count a new turn when we've cycled back past the start of the round
     if (next <= S.current) S.turn = (S.turn || 0) + 1;
+    matchStats.totalTurns++;
     S.current = next;
 
     markAllDirty(); renderAll();
     S.animating = false;
     syncUndoBtn();
 
+    startPlayerTimer();
     if (onlineMode) {
         await pushStateToFirebase();
         S.pendingMove = null;
-        // Refresh turnDeadline locally so the next player's timer shows correctly
-        // on the move-maker's screen. Other clients derive this from the server ts;
-        // we have to set it ourselves since we skip our own Firebase echo.
         if (!S.over) S.turnDeadline = serverNow() + TURN_TIMER_MS;
         updateOnlineInteractivity();
     } else if (IS_AI[S.current]) {
@@ -1974,6 +2136,7 @@ async function chainReact(session) {
 
         comboCount++;
         showCombo(comboCount, PCOLORS[S.current]);
+        if (comboCount > matchStats.maxCombo) { matchStats.maxCombo = comboCount; matchStats.maxComboPlayer = S.current; }
 
         unstable.forEach(([r, c]) => {
             const el = cellEl(r, c); if (!el) return;
@@ -2051,16 +2214,40 @@ function undoOrToggleChat() {
 
 function undoMove() {
     if (history.length === 0 || S.animating || onlineMode) return;
-    S = history.pop();
+    // Pop back past all consecutive AI moves so the human gets to re-decide.
+    // We stop as soon as the state belongs to a human player's turn.
+    do {
+        S = history.pop();
+    } while (history.length > 0 && IS_AI[S.current]);
     for (let i = 0; i < PCOLORS.length; i++) updateGainBadge(i, 0);
     hideCombo(true);
     markAllDirty(); renderAll();
     syncUndoBtn();
-    if (!S.over && IS_AI[S.current]) scheduleAiTurn();
-    else setGridInteractive(true);
+    setGridInteractive(!IS_AI[S.current]);
+    if (IS_AI[S.current]) scheduleAiTurn();
 }
 
 
+
+/* ══════════════════════════════════════════════════════════════════
+   GAME SUMMARY SCREEN
+   ══════════════════════════════════════════════════════════════════ */
+function showSummary(winnerIdx) {
+    const el = document.getElementById('summary-panel');
+    if (!el) return;
+    document.getElementById('sum-turns').textContent = matchStats.totalTurns || '—';
+    const mcp = matchStats.maxComboPlayer;
+    if (matchStats.maxCombo > 0 && mcp >= 0) {
+        document.getElementById('sum-combo').textContent = matchStats.maxCombo + 'x';
+        const nameEl = document.getElementById('sum-combo-who');
+        nameEl.textContent = 'by ' + (PNAMES[mcp] || '');
+        nameEl.style.color  = PCOLORS[mcp] || '#fff';
+    } else {
+        document.getElementById('sum-combo').textContent = '—';
+        document.getElementById('sum-combo-who').textContent = '';
+    }
+    el.style.display = 'flex';
+}
 
 /* ══════════════════════════════════════════════════════════════════
    WIN
@@ -2079,6 +2266,7 @@ function showWin(idx) {
     document.getElementById('win-overlay').classList.add('show');
     if (window.sfxWin) sfxWin();
     triggerHaptic([60, 40, 120]);
+    showSummary(idx);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2086,6 +2274,7 @@ function showWin(idx) {
    ══════════════════════════════════════════════════════════════════ */
 function restartGame() {
     document.getElementById('win-overlay').classList.remove('show');
+    const sp = document.getElementById('summary-panel'); if (sp) sp.style.display = 'none';
 
     if (onlineMode) {
         leaveRoom();
@@ -2093,6 +2282,7 @@ function restartGame() {
     }
 
     history = [];
+    resetMatchStats();
     for (let i = 0; i < PCOLORS.length; i++) updateGainBadge(i, 0);
     hideCombo(true);
     initState();
@@ -2102,6 +2292,7 @@ function restartGame() {
     syncUndoBtn();
     if (IS_AI[0]) scheduleAiTurn();
     else setGridInteractive(true);
+    startPlayerTimer();
 }
 
 function goSetup() {
@@ -2117,6 +2308,7 @@ function goSetup() {
     if (window.moveMusicPlayer) window.moveMusicPlayer('setup');
 
     releaseWakeLock();
+    stopPlayerTimer();
     history = [];
     hideCombo(true);
     ballModes.fill(0);

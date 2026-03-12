@@ -40,6 +40,31 @@
       <span class="field-label">Grid Size</span>
       <div class="btn-row" id="grid-btns"></div>
     </div>
+    <!-- Game Modes -->
+    <div class="setup-modes">
+      <div class="mode-row">
+        <label class="mode-label">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Timed Mode
+        </label>
+        <button class="s-toggle" id="timed-mode-toggle" onclick="this.classList.toggle('on'); setTimedMode(this.classList.contains('on'))" aria-label="Toggle timed mode"></button>
+      </div>
+      <div class="mode-row" id="timed-seconds-row" style="display:none">
+        <span class="mode-label" style="padding-left:18px;font-size:11px;color:var(--dim)">Time per player</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="pill pill-sm active" data-secs="60"  onclick="setTimedSecsPill(this,60)">1 min</button>
+          <button class="pill pill-sm"        data-secs="180" onclick="setTimedSecsPill(this,180)">3 min</button>
+          <button class="pill pill-sm"        data-secs="300" onclick="setTimedSecsPill(this,300)">5 min</button>
+        </div>
+      </div>
+      <div class="mode-row">
+        <label class="mode-label">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          Fog of War
+        </label>
+        <button class="s-toggle" id="fog-toggle" onclick="this.classList.toggle('on'); setFogOfWar(this.classList.contains('on'))" aria-label="Toggle fog of war"></button>
+      </div>
+    </div>
     <button class="start-btn" id="start-btn" onclick="startGame()" disabled>Start Game</button>
     <div class="or-divider"><span>or</span></div>
     <button class="online-btn" onclick="showOnlineLobby()">
@@ -235,6 +260,26 @@
     <div class="wlabel">Winner!</div>
     <div class="wname" id="wname"></div>
     <div class="wsub">All opponents eliminated</div>
+    <div id="summary-panel" style="display:none">
+      <div class="summary-row">
+        <span class="summary-label">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Total Turns
+        </span>
+        <span class="summary-val" id="sum-turns">—</span>
+      </div>
+      <div class="summary-row">
+        <span class="summary-label">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          Biggest Chain
+        </span>
+        <span class="summary-val" id="sum-combo">—</span>
+      </div>
+      <div class="summary-row summary-who-row">
+        <span></span>
+        <span class="summary-who" id="sum-combo-who"></span>
+      </div>
+    </div>
     <div class="win-btns">
       <button class="cta-btn cta-p" onclick="restartGame()">Rematch</button>
       <button class="cta-btn cta-s" id="win-new-game-btn" onclick="confirmNewGame(this)">New Game</button>
@@ -307,6 +352,20 @@
         <button class="orb-skin-btn active" data-skin="glow" onclick="onSettingsOrbSkin('glow')">Glow</button>
         <button class="orb-skin-btn" data-skin="flat" onclick="onSettingsOrbSkin('flat')">Flat</button>
         <button class="orb-skin-btn" data-skin="numbered" onclick="onSettingsOrbSkin('numbered')">Number</button>
+      </div>
+    </div>
+
+    <div class="settings-section-label">Appearance</div>
+
+    <div class="settings-row">
+      <div class="settings-row-left">
+        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+        <span>Theme</span>
+      </div>
+      <div class="skin-picker">
+        <button class="theme-btn active" data-theme="dark"   onclick="onSettingsTheme('dark')">Dark</button>
+        <button class="theme-btn"        data-theme="amoled" onclick="onSettingsTheme('amoled')">AMOLED</button>
+        <button class="theme-btn"        data-theme="light"  onclick="onSettingsTheme('light')">Light</button>
       </div>
     </div>
 
@@ -466,6 +525,13 @@
     }
     requestAnimationFrame(tick);
 })();
+</script>
+<script>
+function setTimedSecsPill(btn, secs) {
+    setTimedSeconds(secs);
+    btn.closest('.mode-row').querySelectorAll('.pill-sm').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+}
 </script>
 </body>
 </html>
