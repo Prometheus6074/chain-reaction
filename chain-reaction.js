@@ -999,7 +999,7 @@ function _forceOnlineMove() {
    SETTINGS — persisted to localStorage
    ══════════════════════════════════════════════════════════════════ */
 const SETTINGS_KEY = 'cr_settings';
-const SETTINGS_DEFAULTS = { musicVol: 50, sfxVol: 55, lowGfx: false, screenShake: true };
+const SETTINGS_DEFAULTS = { musicVol: 25, sfxVol: 55, lowGfx: false, screenShake: true };
 
 function loadSettings() {
     try { return Object.assign({}, SETTINGS_DEFAULTS, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); }

@@ -17,7 +17,7 @@
 
     function savedMusicVol() {
         try { const s = JSON.parse(localStorage.getItem('cr_settings') || '{}');
-              return (s.musicVol !== undefined ? s.musicVol : 50) / 100; }
+              return (s.musicVol !== undefined ? s.musicVol : 25) / 100; }
         catch (e) { return 0.5; }
     }
 
