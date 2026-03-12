@@ -52,13 +52,28 @@ The Normal AI is based on the heuristic approach described by [Keshav Agrawal](h
 
 ### Visuals and Effects
 
-Orbs animate visually as they fly into neighbouring cells during explosions. A chain combo counter tracks how many consecutive explosions occur in a single move. Screen shake, ambient background glow, a crown badge on the leading player, and per-move gain badges round out the visual feedback.
+Orbs animate visually as they fly into neighbouring cells during explosions. A chain combo counter tracks how many consecutive explosions occur in a single move. Ambient background glow, a crown badge on the leading player, and per-move gain badges round out the visual feedback.
 
-A Low Graphics mode is available in-game to reduce visual effects on lower-end devices. In this mode, glow, ripple, shake, and ambient effects are disabled. Flying orb animations are retained but rendered as plain flat dots with no glow.
+### Settings
 
-### Music Player
+A persistent settings panel is accessible via the gear icon below the setup box on menu and lobby screens, and next to the New Game button during a match. All settings are saved to `localStorage` and restored on the next launch. Available options:
 
-A built-in MIDI music player powered by [SpessaSynth](https://github.com/spessasus/SpessaSynth) provides a 15-track soundtrack. The SpessaSynth library is bundled locally so music works fully offline with no CDN dependency. Controls include previous, play/pause, next, a volume slider, and a seek bar. The player repositions itself contextually between the setup screen, online lobby, and in-game view.
+- **Music Volume** — controls the background music level
+- **SFX Volume** — controls the volume of in-game sound effects
+- **Low Graphics** — disables glow, ripple, ambient, and shake effects for lower-end devices. Flying orb animations are retained but rendered as plain flat dots
+- **Screen Shake** — independently toggles the grid shake that occurs during chain reactions, without affecting other graphics settings
+
+### Music
+
+Background music plays automatically on the first user interaction and switches tracks contextually between screens:
+
+| Screen | Track |
+|---|---|
+| Main Menu & Online Lobby | Cymdeithas Six — Rob Jenkins |
+| Singleplayer (in-game) | Ogof Four — Rob Jenkins |
+| Online Multiplayer (in-game) | Pryder Eight — Rob Jenkins |
+
+Tracks loop seamlessly with a short crossfade when switching between screens.
 
 ### Other
 
@@ -107,17 +122,17 @@ The live version linked above has Firebase pre-configured. If you want to self-h
 
 ```
 chain-reaction/
-├── index.html                     # Main HTML shell
-├── chain-reaction.js              # Core game logic, AI, online multiplayer, Firebase sync
-├── chain-reaction.css             # All styles including responsive breakpoints
-├── chain-reaction-midi.js         # MIDI music player (SpessaSynth integration)
-├── chain-reaction-sfx.js          # Sound effects
-├── ai-worker.js                   # AI computation Web Worker
-├── spessasynth_processor.min.js   # SpessaSynth AudioWorklet processor
-├── spessasynth_bundle.js          # SpessaSynth main library (locally bundled, offline-capable)
-├── soundfont.sf3                  # SF3 soundfont for MIDI playback
-├── midi/                          # MIDI track files (15 tracks)
-└── images/                        # Favicon and other assets
+├── index.html                   # Main HTML shell
+├── chain-reaction.js            # Core game logic, AI, online multiplayer, Firebase sync
+├── chain-reaction.css           # All styles including responsive breakpoints
+├── chain-reaction-audio.js      # Background music player (OGG, auto-switches per screen)
+├── chain-reaction-sfx.js        # Procedural sound effects (Web Audio API)
+├── ai-worker.js                 # AI computation Web Worker
+├── audio/                       # OGG background music tracks
+│   ├── menu.ogg
+│   ├── singleplayer.ogg
+│   └── multiplayer.ogg
+└── images/                      # Favicon and other assets
 ```
 
 ---
@@ -127,12 +142,11 @@ chain-reaction/
 | Technology | Purpose |
 |---|---|
 | Vanilla JavaScript (ES2020) | Game logic, AI, UI |
-| Web Workers | AI computation and MIDI normalization off the main thread |
+| Web Workers | AI computation off the main thread |
 | Firebase Realtime Database | Online multiplayer state sync |
-| [SpessaSynth](https://github.com/spessasus/SpessaSynth) (locally bundled) | In-browser MIDI synthesis |
-| Web Audio API + AudioWorklet | Music playback |
+| Web Audio API | Procedural sound effects |
+| HTML Audio API | Background music playback (OGG) |
 | CSS custom properties + clamp() | Responsive design |
-| Rollup | Used once to bundle SpessaSynth for offline use |
 | GitHub Pages | Hosting |
 
 ---
@@ -149,30 +163,6 @@ chain-reaction/
 | Safari (iOS) | Yes | Yes | Yes |
 
 Music requires a user interaction before playback begins, in line with browser autoplay policies.
-
----
-
-## Soundtrack
-
-| Title | Artist |
-|---|---|
-| End of Line | Daft Punk |
-| Derezzed | Daft Punk |
-| Last Chance | Vs. Tabi (Friday Night Funkin') |
-| B-Messenger | Steins;Gate 0 |
-| Septette for the Dead Princess | Touhou 6 |
-| Re:Awake | Steins;Gate 0 |
-| The Young Descendant of Tepes | Touhou 6 |
-| U.N. Owen Was Her? | Touhou 6 |
-| The Maid and the Pocket Watch of Blood | Touhou 6 |
-| Lunar Clock ~ Lunar Dial | Touhou Luna Nights |
-| Killer | JoJo's Bizarre Adventure |
-| Ashes on the Fire | Attack on Titan |
-| Bloody Tears | Castlevania |
-| Abyss Watchers | Dark Souls III |
-| Entrance | Deemo |
-
-MIDI arrangements by [tutogamer2a](https://onlinesequencer.net/2955883). Soundfont by [mrbumpy409/GeneralUser-GS](https://github.com/mrbumpy409/GeneralUser-GS).
 
 ---
 
