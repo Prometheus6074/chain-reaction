@@ -2190,43 +2190,6 @@ body.skin-numbered .orb-count-badge {
 }
 
 /* ══════════════════════════════════════════════════════════════════
-   THEMES — CSS variable overrides via JS on :root
-   ══════════════════════════════════════════════════════════════════ */
-:root {
-    --bg:      #07071a;
-    --surface: #0e0e2a;
-    --card:    #12122e;
-    --border:  #2a2a5a;
-    --text:    #e8e8ff;
-    --dim:     #6060a0;
-}
-body[data-theme="light"] {
-    background: var(--bg);
-    color: var(--text);
-}
-body[data-theme="light"] .setup-box,
-body[data-theme="light"] .ol-panel .setup-box {
-    background: var(--surface);
-    border-color: var(--border);
-}
-body[data-theme="light"] .pcard {
-    background: var(--card);
-    border-color: var(--border);
-}
-body[data-theme="light"] #settings-panel {
-    background: var(--surface);
-}
-body[data-theme="light"] .cell {
-    background: var(--card);
-    border-color: var(--border);
-}
-body[data-theme="light"] #turn-banner,
-body[data-theme="light"] .ghost-btn,
-body[data-theme="light"] .field-label {
-    color: var(--text);
-}
-
-/* ══════════════════════════════════════════════════════════════════
    TIMED MODE — per-player timer display
    ══════════════════════════════════════════════════════════════════ */
 .ptimer {
@@ -2243,31 +2206,6 @@ body[data-theme="light"] .field-label {
 @keyframes timer-blink {
     0%, 100% { opacity: 1; }
     50%       { opacity: 0.3; }
-}
-
-/* ══════════════════════════════════════════════════════════════════
-   FOG OF WAR
-   ══════════════════════════════════════════════════════════════════ */
-.cell.fog-hidden {
-    background: #050510 !important;
-    border-color: #1a1a3a !important;
-}
-.cell.fog-hidden .orb-layer {
-    opacity: 0;
-    pointer-events: none;
-}
-.cell.fog-hidden::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: repeating-linear-gradient(
-        45deg,
-        transparent,
-        transparent 3px,
-        rgba(255,255,255,.03) 3px,
-        rgba(255,255,255,.03) 6px
-    );
-    border-radius: inherit;
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2367,21 +2305,85 @@ body[data-theme="light"] .field-label {
     font-size: 11px;
 }
 
-/* theme-btn reuses .orb-skin-btn styles — just alias */
-.theme-btn {
-    padding: 4px 10px;
+
+#undo-btn { position: relative; }
+
+/* ── Chat unread red dot on undo/chat button ── */
+#chat-icon-dot {
+    display: none;
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #ff3355;
+    box-shadow: 0 0 6px #ff335599;
+    pointer-events: none;
+    z-index: 2;
+}
+
+/* ── Online Rematch overlay ── */
+#rematch-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.7);
+    z-index: 9000;
+    align-items: center;
+    justify-content: center;
+}
+#rematch-overlay.show { display: flex; }
+#rematch-box {
+    background: var(--card, #12122e);
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 18px;
+    padding: 28px 32px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    min-width: 240px;
+    max-width: 320px;
+    text-align: center;
+    box-shadow: 0 0 40px rgba(0,0,0,.6);
+}
+#rematch-msg {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    color: #e8e8ff;
+}
+#rematch-btns {
+    display: flex;
+    gap: 10px;
+}
+#rematch-status {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--dim, #6060a0);
+}
+
+/* ── Timed mode pill-sm ── */
+.pill-sm {
+    padding: 3px 9px;
+    font-size: 11px;
+}
+
+/* Disabled rematch button (player left) */
+#rematch-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    filter: grayscale(1);
+    pointer-events: none;
+}
+
+/* Rematch countdown timer */
+#rematch-timer {
     font-family: 'Share Tech Mono', monospace;
     font-size: 11px;
-    background: transparent;
-    border: 1px solid var(--border, #2a2a5a);
-    border-radius: 6px;
-    color: var(--dim, #6060a0);
-    cursor: pointer;
+    color: #ff335599;
+    min-height: 16px;
     letter-spacing: .05em;
-    transition: all .15s;
-}
-.theme-btn.active, .theme-btn:hover {
-    border-color: var(--accent, #cc44ff);
-    color: #e8e8ff;
-    background: rgba(204,68,255,.12);
 }

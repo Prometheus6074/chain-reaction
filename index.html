@@ -51,18 +51,11 @@
       </div>
       <div class="mode-row" id="timed-seconds-row" style="display:none">
         <span class="mode-label" style="padding-left:18px;font-size:11px;color:var(--dim)">Time per player</span>
-        <div style="display:flex;align-items:center;gap:8px">
+        <div style="display:flex;align-items:center;gap:6px">
           <button class="pill pill-sm active" data-secs="60"  onclick="setTimedSecsPill(this,60)">1 min</button>
           <button class="pill pill-sm"        data-secs="180" onclick="setTimedSecsPill(this,180)">3 min</button>
           <button class="pill pill-sm"        data-secs="300" onclick="setTimedSecsPill(this,300)">5 min</button>
         </div>
-      </div>
-      <div class="mode-row">
-        <label class="mode-label">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-          Fog of War
-        </label>
-        <button class="s-toggle" id="fog-toggle" onclick="this.classList.toggle('on'); setFogOfWar(this.classList.contains('on'))" aria-label="Toggle fog of war"></button>
       </div>
     </div>
     <button class="start-btn" id="start-btn" onclick="startGame()" disabled>Start Game</button>
@@ -236,6 +229,7 @@
       <button class="ghost-btn icon-btn" id="undo-btn" onclick="undoOrToggleChat()" disabled title="Undo">
         <svg id="undo-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11"/></svg>
         <svg id="chat-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span id="chat-icon-dot"></span>
       </button>
       <button class="ghost-btn" id="new-game-btn" onclick="confirmNewGame(this)">New Game</button>
 
@@ -281,7 +275,7 @@
       </div>
     </div>
     <div class="win-btns">
-      <button class="cta-btn cta-p" onclick="restartGame()">Rematch</button>
+      <button class="cta-btn cta-p" id="rematch-btn" onclick="onRematchClick()">Rematch</button>
       <button class="cta-btn cta-s" id="win-new-game-btn" onclick="confirmNewGame(this)">New Game</button>
     </div>
   </div>
@@ -352,20 +346,6 @@
         <button class="orb-skin-btn active" data-skin="glow" onclick="onSettingsOrbSkin('glow')">Glow</button>
         <button class="orb-skin-btn" data-skin="flat" onclick="onSettingsOrbSkin('flat')">Flat</button>
         <button class="orb-skin-btn" data-skin="numbered" onclick="onSettingsOrbSkin('numbered')">Number</button>
-      </div>
-    </div>
-
-    <div class="settings-section-label">Appearance</div>
-
-    <div class="settings-row">
-      <div class="settings-row-left">
-        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-        <span>Theme</span>
-      </div>
-      <div class="skin-picker">
-        <button class="theme-btn active" data-theme="dark"   onclick="onSettingsTheme('dark')">Dark</button>
-        <button class="theme-btn"        data-theme="amoled" onclick="onSettingsTheme('amoled')">AMOLED</button>
-        <button class="theme-btn"        data-theme="light"  onclick="onSettingsTheme('light')">Light</button>
       </div>
     </div>
 
@@ -526,6 +506,20 @@
     requestAnimationFrame(tick);
 })();
 </script>
+
+<!-- ══ ONLINE REMATCH OVERLAY ══ -->
+<div id="rematch-overlay">
+  <div id="rematch-box">
+    <div id="rematch-msg">Waiting for players…</div>
+    <div id="rematch-btns" style="display:none">
+      <button class="cta-btn cta-p" onclick="voteRematch(true)">Accept</button>
+      <button class="cta-btn cta-s" onclick="voteRematch(false)">Decline</button>
+    </div>
+    <div id="rematch-timer"></div>
+    <div id="rematch-status"></div>
+  </div>
+</div>
+
 <script>
 function setTimedSecsPill(btn, secs) {
     setTimedSeconds(secs);

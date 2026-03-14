@@ -57,7 +57,6 @@ let comboHideTimer = null;
 /* ── Game mode flags ── */
 let timedMode    = false;   // per-player countdown clock
 let timedSeconds = 180;     // default 3 min per player
-let fogOfWar     = false;   // only show cells visible to current player
 let playerTimers = [];      // remaining ms per player
 let _timedInterval = null;
 
@@ -639,6 +638,8 @@ function _doLocalLeave() {
     resetOnlineState();
 
     teardownChat();
+    stopRematchListener();
+    closeRematchOverlay();
     releaseWakeLock();
 
     document.getElementById('win-overlay').classList.remove('show');
@@ -688,6 +689,7 @@ function animateElimination(playerIndex, onDone) {
 /* ── Handle a player disconnect: eliminate them, wipe orbs, advance turn ── */
 function handlePlayerDisconnect(playerIndex) {
     if (!S || S.over) return;
+    window._playerDisconnectedThisGame = true;
     animateElimination(playerIndex, () => {
     // Wipe all their orbs from the board
     for (let r = 0; r < cfg.rows; r++) {
@@ -851,6 +853,9 @@ function updateChatUnread() {
     } else {
         badge.style.display = 'none';
     }
+    // Red dot on the in-game undo/chat toggle button
+    const dot = document.getElementById('chat-icon-dot');
+    if (dot) dot.style.display = chatUnreadCount > 0 ? 'block' : 'none';
 }
 
 function playChatPing() {
@@ -932,6 +937,7 @@ function launchOnlineGame(room) {
     document.getElementById('game').style.display = 'flex';
     if (window.moveMusicPlayer) window.moveMusicPlayer('game-online');
 
+    window._playerDisconnectedThisGame = false;
     S = deserializeState(room.state);
     window._orbAnimEpoch = Date.now();
     history = [];
@@ -954,6 +960,24 @@ function launchOnlineGame(room) {
         const data = snap.val();
         if (!data) return;
         const seq = data.moveSeq ?? 0;
+        // Rematch: host flagged this push with rematch:true
+        if (data.rematch && data.writerUid !== myUid) {
+            lastSeenMoveSeq = seq;
+            closeRematchOverlay();
+            document.getElementById('win-overlay').classList.remove('show');
+            const sp = document.getElementById('summary-panel'); if (sp) sp.style.display = 'none';
+            window._playerDisconnectedThisGame = false;
+            history = [];
+            resetMatchStats();
+            S = deserializeState(data);
+            buildGridDOM();
+            buildPlayerStrip();
+            hideCombo(true);
+            markAllDirty(); renderAll();
+            syncUndoBtn();
+            updateOnlineInteractivity();
+            return;
+        }
         if (seq <= lastSeenMoveSeq) return;
         lastSeenMoveSeq = seq;
         // Skip our own echo — we already animated locally
@@ -983,11 +1007,33 @@ function launchOnlineGame(room) {
         const color = PCOLORS[pi] || '#fff';
         showPlayerLeftSide(name, color);
         addSystemChatMessage(`${name} left the game.`);
+        // Always flag a disconnect so rematch btn is greyed (even if game is already over)
+        window._playerDisconnectedThisGame = true;
+        const rematchBtn = document.getElementById('rematch-btn');
+        if (rematchBtn) {
+            rematchBtn.disabled = true;
+            rematchBtn.title = 'A player left — rematch unavailable';
+        }
+        // Also close any pending rematch overlay
+        stopRematchListener();
+        if (roomRef) roomRef.child('rematch').remove().catch(() => {});
+        closeRematchOverlay();
         handlePlayerDisconnect(pi);
         // Clear the disconnect signal so it doesn't re-fire on reconnect
         if (isHost) roomRef.child('disconnected').remove().catch(() => {});
     });
     onlineListeners.push({ ref: discRef, listener: discListener, event: 'value' });
+
+    // All players listen on the rematch node so non-proposers see rematch requests
+    const rematchNodeRef = roomRef.child('rematch');
+    const rematchNodeListener = rematchNodeRef.on('value', snap => {
+        if (!snap.exists() || !snap.val()) return;
+        // If we have no listener yet, start one (non-proposer path)
+        if (!_rematchListener) {
+            listenRematchVotes();
+        }
+    });
+    onlineListeners.push({ ref: rematchNodeRef, listener: rematchNodeListener, event: 'value' });
 }
 
 /* ── Enforce turn in online mode ── */
@@ -1106,7 +1152,7 @@ function _forceOnlineMove() {
    SETTINGS — persisted to localStorage
    ══════════════════════════════════════════════════════════════════ */
 const SETTINGS_KEY = 'cr_settings';
-const SETTINGS_DEFAULTS = { musicVol: 50, sfxVol: 55, lowGfx: false, screenShake: true, hapticFeedback: true, orbSkin: 'glow', keepAwake: true, theme: 'dark' };
+const SETTINGS_DEFAULTS = { musicVol: 50, sfxVol: 55, lowGfx: false, screenShake: true, hapticFeedback: true, orbSkin: 'glow', keepAwake: true };
 
 function loadSettings() {
     try { return Object.assign({}, SETTINGS_DEFAULTS, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); }
@@ -1124,7 +1170,6 @@ function applySettings(s) {
     else if (s.orbSkin === 'numbered') document.body.classList.add('skin-numbered');
     if (window.setMusicVolume) window.setMusicVolume(s.musicVol / 100);
     if (window.setSfxVolume)   window.setSfxVolume(s.sfxVol / 100);
-    applyTheme(s.theme || 'dark');
     syncSettingsUI(s);
 }
 function syncSettingsUI(s) {
@@ -1146,8 +1191,6 @@ function syncSettingsUI(s) {
     if (kaw) kaw.classList.toggle('on', s.keepAwake !== false);
     document.querySelectorAll('.orb-skin-btn').forEach(b =>
         b.classList.toggle('active', b.dataset.skin === (s.orbSkin || 'glow')));
-    document.querySelectorAll('.theme-btn').forEach(b =>
-        b.classList.toggle('active', b.dataset.theme === (s.theme || 'dark')));
 }
 
 const _settings = loadSettings();
@@ -1208,32 +1251,6 @@ function onSettingsKeepAwake() {
 }
 
 
-
-/* ══════════════════════════════════════════════════════════════════
-   THEMES
-   ══════════════════════════════════════════════════════════════════ */
-const THEMES = {
-    dark:   { bg:'#07071a', surface:'#0e0e2a', card:'#12122e', border:'#2a2a5a', text:'#e8e8ff', dim:'#6060a0' },
-    amoled: { bg:'#000000', surface:'#0a0a0a', card:'#111111', border:'#222244', text:'#e8e8ff', dim:'#505080' },
-    light:  { bg:'#f0f0fa', surface:'#ffffff', card:'#f8f8ff', border:'#c0c0e0', text:'#111130', dim:'#7070a0' },
-};
-function applyTheme(name) {
-    const t = THEMES[name] || THEMES.dark;
-    const r = document.documentElement;
-    r.style.setProperty('--bg',      t.bg);
-    r.style.setProperty('--surface', t.surface);
-    r.style.setProperty('--card',    t.card);
-    r.style.setProperty('--border',  t.border);
-    r.style.setProperty('--text',    t.text);
-    r.style.setProperty('--dim',     t.dim);
-    document.body.dataset.theme = name;
-    document.querySelectorAll('.theme-btn').forEach(b =>
-        b.classList.toggle('active', b.dataset.theme === name));
-}
-function onSettingsTheme(name) {
-    const s = loadSettings(); s.theme = name; saveSettings(s);
-    applyTheme(name);
-}
 
 /* ══════════════════════════════════════════════════════════════════
    HAPTIC FEEDBACK
@@ -1589,13 +1606,6 @@ function renderCell(r, c) {
     el.classList.remove('near-crit', 'cell-glow');
     el.style.removeProperty('--cell-glow-color');
 
-    // Fog of war
-    if (fogOfWar && !S.over && !onlineMode) {
-        el.classList.toggle('fog-hidden', !isCellVisible(r, c, S.current));
-    } else {
-        el.classList.remove('fog-hidden');
-    }
-
     if (data.count <= 0) return;
     const cm = critMass(r, c);
     const surviving = data.count >= cm ? data.count - cm : data.count;
@@ -1887,6 +1897,40 @@ function scheduleAiTurn() {
 /* ══════════════════════════════════════════════════════════════════
    TIMED MODE — per-player countdown clocks
    ══════════════════════════════════════════════════════════════════ */
+/* ── Eliminate a player who ran out of time ── */
+function eliminateTimedOutPlayer(playerIndex) {
+    if (!S || S.over || S.eliminated[playerIndex]) return;
+    animateElimination(playerIndex, () => {
+        // Wipe their orbs
+        for (let r = 0; r < cfg.rows; r++)
+            for (let c = 0; c < cfg.cols; c++)
+                if (S.grid[r][c].owner === playerIndex) {
+                    S.orbCount[playerIndex] -= S.grid[r][c].count;
+                    S.grid[r][c] = { owner: -1, count: 0 };
+                }
+        S.orbCount[playerIndex] = 0;
+        S.eliminated[playerIndex] = true;
+        S.hasMoved[playerIndex] = true;
+
+        const survivors = S.eliminated.map((e, i) => !e ? i : -1).filter(i => i >= 0);
+        if (survivors.length === 1) {
+            S.over = true;
+            markAllDirty(); renderAll();
+            showWin(survivors[0]);
+            return;
+        }
+        // Advance turn if it was their turn
+        if (S.current === playerIndex) {
+            let next = (playerIndex + 1) % PCOLORS.length, guard = 0;
+            while (S.eliminated[next] && guard++ < PCOLORS.length)
+                next = (next + 1) % PCOLORS.length;
+            S.current = next;
+        }
+        markAllDirty(); renderAll();
+        startPlayerTimer();
+    });
+}
+
 function startPlayerTimer() {
     stopPlayerTimer();
     if (!timedMode || S.over || onlineMode) return;
@@ -1900,19 +1944,7 @@ function startPlayerTimer() {
         renderPlayerTimers();
         if (playerTimers[idx] <= 0) {
             stopPlayerTimer();
-            // Force a random legal move
-            const owned = [], empty = [];
-            for (let r = 0; r < cfg.rows; r++)
-                for (let c = 0; c < cfg.cols; c++) {
-                    const cell = S.grid[r][c];
-                    if (cell.owner === idx) owned.push({r, c});
-                    else if (cell.owner === -1) empty.push({r, c});
-                }
-            const pool = owned.length ? owned : empty;
-            if (pool.length) {
-                const pick = pool[Math.floor(Math.random() * pool.length)];
-                handleClick(pick.r, pick.c);
-            }
+            eliminateTimedOutPlayer(idx);
         }
     }, 100);
 }
@@ -1935,14 +1967,6 @@ function renderPlayerTimers() {
     }
 }
 
-/* ── Fog-of-war visibility check ── */
-function isCellVisible(r, c, player) {
-    if (S.grid[r][c].owner === player) return true;
-    for (const [nr, nc] of neighbors(r, c))
-        if (S.grid[nr][nc].owner === player) return true;
-    return false;
-}
-
 /* ── Game mode setters (called from HTML) ── */
 function setTimedMode(on) {
     timedMode = on;
@@ -1957,8 +1981,6 @@ function setTimedSeconds(val) {
         lbl.textContent = s === 0 ? `${m} min` : `${m}m ${s}s`;
     }
 }
-function setFogOfWar(on) { fogOfWar = on; }
-
 /* ══════════════════════════════════════════════════════════════════
    REMOTE MOVE PLAYBACK (online: animate other players' moves)
    ══════════════════════════════════════════════════════════════════ */
@@ -2065,7 +2087,6 @@ async function handleClick(r, c) {
         next = (next + 1) % PCOLORS.length;
     // Only count a new turn when we've cycled back past the start of the round
     if (next <= S.current) S.turn = (S.turn || 0) + 1;
-    matchStats.totalTurns++;
     S.current = next;
 
     markAllDirty(); renderAll();
@@ -2235,7 +2256,7 @@ function undoMove() {
 function showSummary(winnerIdx) {
     const el = document.getElementById('summary-panel');
     if (!el) return;
-    document.getElementById('sum-turns').textContent = matchStats.totalTurns || '—';
+    document.getElementById('sum-turns').textContent = (S.turn || 0) + 1;
     const mcp = matchStats.maxComboPlayer;
     if (matchStats.maxCombo > 0 && mcp >= 0) {
         document.getElementById('sum-combo').textContent = matchStats.maxCombo + 'x';
@@ -2256,8 +2277,7 @@ function showWin(idx) {
     const col = PCOLORS[idx];
     const wn = document.getElementById('wname');
     const aiTag = IS_AI[idx] ? ' (AI)' : '';
-    const youTag = onlineMode && idx === myPlayerIndex ? ' — that\'s you!' : '';
-    wn.textContent = `${PNAMES[idx]}${aiTag} wins!${youTag}`;
+    wn.textContent = `${PNAMES[idx]}${aiTag} wins!`;
     wn.style.color = col;
     wn.style.textShadow = `0 0 28px ${col}`;
     const box = document.getElementById('win-box');
@@ -2267,14 +2287,30 @@ function showWin(idx) {
     if (window.sfxWin) sfxWin();
     triggerHaptic([60, 40, 120]);
     showSummary(idx);
+    // Grey out rematch if someone disconnected during the game
+    const rematchBtn = document.getElementById('rematch-btn');
+    if (rematchBtn && onlineMode) {
+        const disabled = !!window._playerDisconnectedThisGame;
+        rematchBtn.disabled = disabled;
+        rematchBtn.title = disabled ? 'A player left — rematch unavailable' : '';
+    }
 }
 
 /* ══════════════════════════════════════════════════════════════════
    NAVIGATION
    ══════════════════════════════════════════════════════════════════ */
+function onRematchClick() {
+    if (onlineMode) {
+        proposeRematch();
+    } else {
+        restartGame();
+    }
+}
+
 function restartGame() {
     document.getElementById('win-overlay').classList.remove('show');
     const sp = document.getElementById('summary-panel'); if (sp) sp.style.display = 'none';
+    closeRematchOverlay();
 
     if (onlineMode) {
         leaveRoom();
@@ -2293,6 +2329,189 @@ function restartGame() {
     if (IS_AI[0]) scheduleAiTurn();
     else setGridInteractive(true);
     startPlayerTimer();
+}
+
+
+/* ══════════════════════════════════════════════════════════════════
+   ONLINE REMATCH
+   ══════════════════════════════════════════════════════════════════ */
+let _rematchListener = null;
+
+function proposeRematch() {
+    if (!roomRef || !onlineMode) return;
+    showRematchOverlay('Waiting for all players…', false);
+    // Write own vote
+    roomRef.child(`rematch/${myPlayerIndex}`).set('yes');
+    // Listen for all votes
+    listenRematchVotes();
+}
+
+function voteRematch(accept) {
+    if (!roomRef) return;
+    roomRef.child(`rematch/${myPlayerIndex}`).set(accept ? 'yes' : 'no');
+    if (!accept) {
+        // Decline immediately visible to all via Firebase listener
+        closeRematchOverlay();
+    }
+}
+
+function listenRematchVotes() {
+    if (!roomRef) return;
+    if (_rematchListener) return; // already attached
+    const ref = roomRef.child('rematch');
+    _rematchListener = ref.on('value', snap => {
+        const votes = snap.val() || {};
+        const numPlayers = PCOLORS.length;
+        const allVoted = Object.keys(votes).length >= numPlayers;
+        const anyNo = Object.values(votes).includes('no');
+        const allYes = allVoted && !anyNo;
+
+        // Update status list
+        const lines = [];
+        for (let i = 0; i < numPlayers; i++) {
+            const v = votes[i];
+            const icon = v === 'yes' ? '✓' : v === 'no' ? '✗' : '…';
+            lines.push(`<span style="color:${PCOLORS[i]}">${PNAMES[i]}</span> ${icon}`);
+        }
+        const statusEl = document.getElementById('rematch-status');
+        if (statusEl) statusEl.innerHTML = lines.join('<br>');
+
+        if (anyNo) {
+            // Find who declined
+            const decliner = Object.entries(votes).find(([,v]) => v === 'no');
+            const name = decliner ? (PNAMES[parseInt(decliner[0])] || 'A player') : 'A player';
+            stopRematchListener();
+            if (roomRef) roomRef.child('rematch').remove().catch(()=>{});
+            closeRematchOverlay();
+            showRematchToast(`${name} declined the rematch.`);
+            return;
+        }
+
+        if (allYes) {
+            stopRematchListener();
+            if (roomRef) roomRef.child('rematch').remove().catch(()=>{});
+            closeRematchOverlay();
+            if (isHost) {
+                doOnlineRematch();
+            }
+            // Non-hosts wait for new state via the existing state listener
+            return;
+        }
+
+        // Show prompt to players who haven't voted yet
+        if (!votes[myPlayerIndex]) {
+            const proposer = Object.entries(votes).find(([,v]) => v === 'yes');
+            const pName = proposer ? (PNAMES[parseInt(proposer[0])] || 'Someone') : 'Someone';
+            showRematchOverlay(`${pName} wants a rematch!`, true);
+        }
+    });
+    onlineListeners.push({ ref, listener: _rematchListener, event: 'value' });
+}
+
+async function doOnlineRematch() {
+    if (!isHost || !roomRef) return;
+    window._playerDisconnectedThisGame = false;
+    resetMatchStats();
+
+    // CRITICAL: save the current moveSeq BEFORE we restore history[0],
+    // so the sequence never resets to 1 and all clients' seq guards keep working.
+    const currentSeq = S.moveSeq || 0;
+
+    // Restore the pre-first-move state (history[0]) — blank board, turn 0.
+    // If nobody moved yet (history empty), fall back to initState.
+    if (history.length > 0) {
+        S = history[0];
+    } else {
+        initState();
+    }
+    history = [];
+    S.animating = false;
+    S.over = false;
+    S.moveSeq = currentSeq; // restore sequence so serializeState increments from here
+
+    // Close win screen
+    document.getElementById('win-overlay').classList.remove('show');
+    const sp = document.getElementById('summary-panel'); if (sp) sp.style.display = 'none';
+    buildGridDOM();
+    buildPlayerStrip();
+    hideCombo(true);
+    markAllDirty(); renderAll();
+    syncUndoBtn();
+
+    // Serialize with rematch:true flag — moveSeq continues from currentSeq+1
+    const payload = serializeState(S);
+    payload.rematch = true;
+    S.moveSeq = payload.moveSeq; // keep host's local seq in sync
+
+    await roomRef.child('state').set(payload);
+    await roomRef.child('status').set('playing');
+    S.turnDeadline = serverNow() + TURN_TIMER_MS;
+    updateOnlineInteractivity();
+}
+
+function stopRematchListener() {
+    if (_rematchListener && roomRef) {
+        const cb = _rematchListener;
+        roomRef.child('rematch').off('value', cb);
+        onlineListeners = onlineListeners.filter(l => l.listener !== cb);
+    }
+    _rematchListener = null;
+}
+
+let _rematchCountdown = null;
+
+function showRematchOverlay(msg, showBtns) {
+    const overlay = document.getElementById('rematch-overlay');
+    const msgEl   = document.getElementById('rematch-msg');
+    const btnsEl  = document.getElementById('rematch-btns');
+    if (!overlay) return;
+    if (msgEl) msgEl.textContent = msg;
+    if (btnsEl) btnsEl.style.display = showBtns ? 'flex' : 'none';
+    overlay.classList.add('show');
+    if (showBtns) startRematchCountdown();
+    else stopRematchCountdown();
+}
+
+function startRematchCountdown() {
+    stopRematchCountdown();
+    let secs = 10;
+    const timerEl = document.getElementById('rematch-timer');
+    if (timerEl) timerEl.textContent = `Auto-declining in ${secs}s`;
+    _rematchCountdown = setInterval(() => {
+        secs--;
+        if (timerEl) timerEl.textContent = secs > 0 ? `Auto-declining in ${secs}s` : 'Declining…';
+        if (secs <= 0) {
+            stopRematchCountdown();
+            voteRematch(false);
+        }
+    }, 1000);
+}
+
+function stopRematchCountdown() {
+    if (_rematchCountdown) { clearInterval(_rematchCountdown); _rematchCountdown = null; }
+    const timerEl = document.getElementById('rematch-timer');
+    if (timerEl) timerEl.textContent = '';
+}
+
+function closeRematchOverlay() {
+    stopRematchCountdown();
+    const overlay = document.getElementById('rematch-overlay');
+    if (overlay) overlay.classList.remove('show');
+    const statusEl = document.getElementById('rematch-status');
+    if (statusEl) statusEl.innerHTML = '';
+}
+
+function showRematchToast(msg) {
+    let toast = document.getElementById('rematch-toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'rematch-toast';
+        toast.className = 'cr-toast host-left-toast';
+        document.body.appendChild(toast);
+    }
+    toast.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 3500);
 }
 
 function goSetup() {
