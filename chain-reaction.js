@@ -85,6 +85,7 @@ let onlineNumPlayers = 2;
 let onlineRoomPassword = '';
 let myUsername = sessionStorage.getItem('cr_username') || localStorage.getItem('cr_username') || '';
 let _onlineTurnTimerInterval = null;
+let _pendingStateSnap = null;     // state-only update queued while animating
 const TURN_TIMER_MS = 30000; // 30 seconds per turn
 
 /* ── Firebase init (lazy) ── */
@@ -302,7 +303,9 @@ async function createRoom() {
         config: {
             rows: onlineCfgRows,
             cols: onlineCfgCols,
-            numPlayers: onlineNumPlayers
+            numPlayers: onlineNumPlayers,
+            timedMode: timedMode,
+            timedSeconds: timedSeconds
         },
         slots: { 0: { uid: myUid, joined: true, name: myUsername, color: ALL_COLORS[0] } },
         hostUid: myUid,
@@ -563,6 +566,23 @@ function updateWaitingRoomUI(room) {
     document.getElementById('ol-status').textContent = `${numJoined} / ${numNeeded} players joined`;
     document.getElementById('ol-status-sub').textContent =
         numJoined >= numNeeded ? 'Room is full — host can start' : 'Waiting for players…';
+
+    // Show timed mode badge
+    let timedBadge = document.getElementById('ol-timed-badge');
+    if (room.config.timedMode) {
+        if (!timedBadge) {
+            timedBadge = document.createElement('div');
+            timedBadge.id = 'ol-timed-badge';
+            timedBadge.className = 'ol-timed-badge';
+            const statusEl = document.getElementById('ol-status');
+            statusEl.parentNode.insertBefore(timedBadge, statusEl.nextSibling);
+        }
+        const mins = Math.floor((room.config.timedSeconds || 180) / 60);
+        timedBadge.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Timed Mode &nbsp;·&nbsp; ${mins} min per player`;
+        timedBadge.style.display = '';
+    } else if (timedBadge) {
+        timedBadge.style.display = 'none';
+    }
 
     if (isHost) {
         const btn = document.getElementById('ol-start-btn');
@@ -932,6 +952,8 @@ function launchOnlineGame(room) {
     IS_AI = new Array(np).fill(false);
     IS_HARD_AI = new Array(np).fill(false);
     cfg = { rows: room.config.rows, cols: room.config.cols };
+    timedMode    = !!room.config.timedMode;
+    timedSeconds = room.config.timedSeconds || 180;
 
     document.getElementById('online-lobby').classList.remove('show');
     document.getElementById('game').style.display = 'flex';
@@ -950,18 +972,21 @@ function launchOnlineGame(room) {
     setupChat();
 
     requestWakeLock();
+    startPlayerTimer();
     // Track last applied move sequence to avoid duplicates (clock-skew-proof)
     let lastSeenMoveSeq = room.state?.moveSeq ?? 0;
+    _pendingStateSnap = null;
 
     // Listen for state changes (other players' moves)
     const stateRef = roomRef.child('state');
     const stateListener = stateRef.on('value', snap => {
-        if (!snap.exists() || S.animating) return;
+        if (!snap.exists()) return;
         const data = snap.val();
         if (!data) return;
         const seq = data.moveSeq ?? 0;
         // Rematch: host flagged this push with rematch:true
         if (data.rematch && data.writerUid !== myUid) {
+            _pendingStateSnap = null;
             lastSeenMoveSeq = seq;
             closeRematchOverlay();
             document.getElementById('win-overlay').classList.remove('show');
@@ -975,19 +1000,34 @@ function launchOnlineGame(room) {
             hideCombo(true);
             markAllDirty(); renderAll();
             syncUndoBtn();
+            startPlayerTimer();
             updateOnlineInteractivity();
             return;
         }
         if (seq <= lastSeenMoveSeq) return;
-        lastSeenMoveSeq = seq;
         // Skip our own echo — we already animated locally
-        if (data.writerUid === myUid) return;
-        // If the remote state includes the move coords, animate it; otherwise just snap
+        if (data.writerUid === myUid) { lastSeenMoveSeq = seq; return; }
+
+        // If a move animation is in progress, queue state-only updates for later;
+        // move updates can be dropped since they carry their own animation
+        if (S.animating) {
+            if (!data.move || data.move.r == null) _pendingStateSnap = { data, seq };
+            return;
+        }
+
+        lastSeenMoveSeq = seq;
         if (data.move && data.move.r != null && data.move.c != null) {
             playRemoteMove(data.move.r, data.move.c, data);
         } else {
             S = deserializeState(data);
             markAllDirty(); renderAll();
+            if (S.over) {
+                const winner = S.eliminated.findIndex(e => !e);
+                if (winner !== -1) showWin(winner);
+                stopPlayerTimer();
+            } else {
+                startPlayerTimer();
+            }
             updateOnlineInteractivity();
         }
     });
@@ -1152,7 +1192,7 @@ function _forceOnlineMove() {
    SETTINGS — persisted to localStorage
    ══════════════════════════════════════════════════════════════════ */
 const SETTINGS_KEY = 'cr_settings';
-const SETTINGS_DEFAULTS = { musicVol: 50, sfxVol: 55, lowGfx: false, screenShake: true, hapticFeedback: true, orbSkin: 'glow', keepAwake: true };
+const SETTINGS_DEFAULTS = { musicVol: 50, sfxVol: 55, lowGfx: false, screenShake: true, orbSkin: 'glow' };
 
 function loadSettings() {
     try { return Object.assign({}, SETTINGS_DEFAULTS, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); }
@@ -1185,10 +1225,6 @@ function syncSettingsUI(s) {
     if (ss)  ss.classList.toggle('on', s.screenShake !== false);
     if (mvv) mvv.textContent = s.musicVol;
     if (svv) svv.textContent = s.sfxVol;
-    const hap = document.getElementById('s-haptic-toggle');
-    if (hap) hap.classList.toggle('on', s.hapticFeedback !== false);
-    const kaw = document.getElementById('s-keepawake-toggle');
-    if (kaw) kaw.classList.toggle('on', s.keepAwake !== false);
     document.querySelectorAll('.orb-skin-btn').forEach(b =>
         b.classList.toggle('active', b.dataset.skin === (s.orbSkin || 'glow')));
 }
@@ -1232,10 +1268,6 @@ function onSettingsScreenShake() {
     const btn = document.getElementById('s-shake-toggle'); if (btn) btn.classList.toggle('on', screenShake);
 }
 function toggleLowGfx() { onSettingsLowGfx(); }
-function onSettingsHaptic() {
-    const s = loadSettings(); s.hapticFeedback = !s.hapticFeedback; saveSettings(s);
-    const btn = document.getElementById('s-haptic-toggle'); if (btn) btn.classList.toggle('on', s.hapticFeedback);
-}
 function onSettingsOrbSkin(skin) {
     const s = loadSettings(); s.orbSkin = skin; saveSettings(s);
     document.body.classList.remove('skin-flat', 'skin-numbered');
@@ -1243,11 +1275,6 @@ function onSettingsOrbSkin(skin) {
     else if (skin === 'numbered') document.body.classList.add('skin-numbered');
     document.querySelectorAll('.orb-skin-btn').forEach(b => b.classList.toggle('active', b.dataset.skin === skin));
     markAllDirty(); if (S.grid) renderAll();
-}
-function onSettingsKeepAwake() {
-    const s = loadSettings(); s.keepAwake = !s.keepAwake; saveSettings(s);
-    const btn = document.getElementById('s-keepawake-toggle'); if (btn) btn.classList.toggle('on', s.keepAwake);
-    if (s.keepAwake) requestWakeLock(); else releaseWakeLock();
 }
 
 
@@ -1257,8 +1284,6 @@ function onSettingsKeepAwake() {
    ══════════════════════════════════════════════════════════════════ */
 function triggerHaptic(pattern) {
     try {
-        const s = loadSettings();
-        if (s.hapticFeedback === false) return;
         if (navigator.vibrate) navigator.vibrate(pattern);
     } catch (e) {}
 }
@@ -1269,8 +1294,7 @@ function triggerHaptic(pattern) {
 let _wakeLock = null;
 async function requestWakeLock() {
     try {
-        const s = loadSettings();
-        if (s.keepAwake === false || !navigator.wakeLock) return;
+        if (!navigator.wakeLock) return;
         if (_wakeLock) return;
         _wakeLock = await navigator.wakeLock.request('screen');
         _wakeLock.addEventListener('release', () => { _wakeLock = null; });
@@ -1284,6 +1308,7 @@ document.addEventListener('visibilitychange', () => {
         requestWakeLock();
     }
 });
+
 
 function triggerShake(comboStep, unstableCount) {
     if (lowGfx || !screenShake) return;
@@ -1339,6 +1364,7 @@ function serializeState(state) {
         moveSeq: (state.moveSeq || 0) + 1,
         writerUid: myUid,
         move: state.pendingMove || null,
+        playerTimers: timedMode ? [...playerTimers] : null,
         // ts is set by Firebase server — all clients derive turnDeadline from this
         ts: firebase.database.ServerValue.TIMESTAMP
     };
@@ -1349,6 +1375,12 @@ function deserializeState(data) {
     const toArr = v => Array.isArray(v) ? v : Object.values(v);
     // data.ts is set by Firebase's ServerValue.TIMESTAMP — true server time, no clock skew
     const serverWriteTime = data.ts || serverNow();
+    // Restore per-player timers if present (timed mode multiplayer)
+    if (timedMode && data.playerTimers) {
+        const rawTimers = data.playerTimers;
+        const arr = Array.isArray(rawTimers) ? rawTimers : Object.values(rawTimers);
+        playerTimers = arr.map(v => (typeof v === 'number' ? v : timedSeconds * 1000));
+    }
     return {
         grid: toArr(data.grid).map(row =>
             toArr(row).map(cell => ({ owner: cell.o, count: cell.c }))),
@@ -1686,6 +1718,23 @@ function renderBanner() {
         b.style.borderColor = col + 'aa';
         b.style.textShadow = `0 0 10px ${col}77`;
     }
+    // Timed mode badge beneath banner
+    let tmBadge = document.getElementById('ingame-timed-badge');
+    if (timedMode) {
+        if (!tmBadge) {
+            tmBadge = document.createElement('div');
+            tmBadge.id = 'ingame-timed-badge';
+            tmBadge.className = 'ingame-timed-badge';
+            b.insertAdjacentElement('afterend', tmBadge);
+        }
+        const mins = Math.floor(timedSeconds / 60);
+        const secs = timedSeconds % 60;
+        const timeStr = secs === 0 ? `${mins} min` : `${mins}m ${secs}s`;
+        tmBadge.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Timed Mode · ${timeStr}/player`;
+        tmBadge.style.display = '';
+    } else if (tmBadge) {
+        tmBadge.style.display = 'none';
+    }
 }
 function syncUndoBtn() {
     const btn = document.getElementById('undo-btn');
@@ -1916,6 +1965,7 @@ function eliminateTimedOutPlayer(playerIndex) {
         if (survivors.length === 1) {
             S.over = true;
             markAllDirty(); renderAll();
+            if (onlineMode) pushStateToFirebase();
             showWin(survivors[0]);
             return;
         }
@@ -1928,12 +1978,13 @@ function eliminateTimedOutPlayer(playerIndex) {
         }
         markAllDirty(); renderAll();
         startPlayerTimer();
+        if (onlineMode) pushStateToFirebase();
     });
 }
 
 function startPlayerTimer() {
     stopPlayerTimer();
-    if (!timedMode || S.over || onlineMode) return;
+    if (!timedMode || S.over) return;
     const idx = S.current;
     let last = Date.now();
     _timedInterval = setInterval(() => {
@@ -1944,7 +1995,12 @@ function startPlayerTimer() {
         renderPlayerTimers();
         if (playerTimers[idx] <= 0) {
             stopPlayerTimer();
-            eliminateTimedOutPlayer(idx);
+            if (onlineMode) {
+                // Only the player whose timer ran out handles their own timeout
+                if (S.current === myPlayerIndex) eliminateTimedOutPlayer(idx);
+            } else {
+                eliminateTimedOutPlayer(idx);
+            }
         }
     }, 100);
 }
@@ -2023,7 +2079,24 @@ async function playRemoteMove(r, c, finalData) {
 
     markAllDirty(); renderAll();
     S.animating = false;
-    updateOnlineInteractivity();
+    // Apply any state-only update (e.g. timer elimination) that arrived during animation
+    if (_pendingStateSnap) {
+        const pending = _pendingStateSnap;
+        _pendingStateSnap = null;
+        S = deserializeState(pending.data);
+        markAllDirty(); renderAll();
+        if (S.over) {
+            const winner = S.eliminated.findIndex(e => !e);
+            if (winner !== -1) showWin(winner);
+            stopPlayerTimer();
+        } else {
+            startPlayerTimer();
+        }
+        updateOnlineInteractivity();
+    } else {
+        startPlayerTimer();
+        updateOnlineInteractivity();
+    }
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2256,6 +2329,8 @@ function undoMove() {
 function showSummary(winnerIdx) {
     const el = document.getElementById('summary-panel');
     if (!el) return;
+    const wc = PCOLORS[winnerIdx] || '#ffffff';
+    el.style.border = `1px solid ${wc}66`;
     document.getElementById('sum-turns').textContent = (S.turn || 0) + 1;
     const mcp = matchStats.maxComboPlayer;
     if (matchStats.maxCombo > 0 && mcp >= 0) {
@@ -2428,6 +2503,8 @@ async function doOnlineRematch() {
     S.animating = false;
     S.over = false;
     S.moveSeq = currentSeq; // restore sequence so serializeState increments from here
+    // Reset per-player timers to full for the new game
+    playerTimers = timedMode ? new Array(PCOLORS.length).fill(timedSeconds * 1000) : [];
 
     // Close win screen
     document.getElementById('win-overlay').classList.remove('show');
@@ -2446,6 +2523,7 @@ async function doOnlineRematch() {
     await roomRef.child('state').set(payload);
     await roomRef.child('status').set('playing');
     S.turnDeadline = serverNow() + TURN_TIMER_MS;
+    startPlayerTimer();
     updateOnlineInteractivity();
 }
 

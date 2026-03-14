@@ -11,6 +11,37 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <link rel="icon" type="image/x-icon" href="images/favicon.ico">
 
+<style>
+/* ── Timed mode badge in waiting room ── */
+.ol-timed-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(255,204,0,0.12);
+    border: 1px solid rgba(255,204,0,0.35);
+    color: #ffcc00;
+    font-size: 11px;
+    font-family: 'Share Tech Mono', monospace;
+    padding: 5px 12px;
+    border-radius: 20px;
+    letter-spacing: 0.04em;
+    align-self: center;
+}
+/* ── Timed mode badge in-game under turn banner ── */
+.ingame-timed-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    color: #ffcc00;
+    font-size: 10px;
+    font-family: 'Share Tech Mono', monospace;
+    opacity: 0.75;
+    margin-top: 2px;
+    letter-spacing: 0.03em;
+    pointer-events: none;
+}
+</style>
 </head>
 <body>
 <!-- ══ INTRO SCREEN ══ -->
@@ -132,6 +163,23 @@
       <div>
         <span class="field-label">Room Password <span style="color:var(--dim);font-size:11px;font-family:'Share Tech Mono',monospace">(optional)</span></span>
         <input id="ol-password-input" class="ol-code-input" placeholder="Leave blank for public room" maxlength="20" style="letter-spacing:normal;font-size:13px">
+      </div>
+      <div id="ol-modes" style="display:flex;flex-direction:column;gap:8px">
+        <div class="mode-row">
+          <label class="mode-label">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            Timed Mode
+          </label>
+          <button class="s-toggle" id="ol-timed-toggle" onclick="onOlTimedToggle(this)" aria-label="Toggle timed mode"></button>
+        </div>
+        <div class="mode-row" id="ol-timed-seconds-row" style="display:none">
+          <span class="mode-label" style="padding-left:18px;font-size:11px;color:var(--dim)">Time per player</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            <button class="pill pill-sm active" data-secs="60"  onclick="setOlTimedPill(this,60)">1 min</button>
+            <button class="pill pill-sm"        data-secs="180" onclick="setOlTimedPill(this,180)">3 min</button>
+            <button class="pill pill-sm"        data-secs="300" onclick="setOlTimedPill(this,300)">5 min</button>
+          </div>
+        </div>
       </div>
       <button class="start-btn" onclick="createRoom()">Create Room →</button>
       <button class="ghost-btn" style="align-self:center;margin-top:4px" onclick="showOlMode()">← Back</button>
@@ -276,7 +324,7 @@
     </div>
     <div class="win-btns">
       <button class="cta-btn cta-p" id="rematch-btn" onclick="onRematchClick()">Rematch</button>
-      <button class="cta-btn cta-s" id="win-new-game-btn" onclick="confirmNewGame(this)">New Game</button>
+      <button class="cta-btn cta-s" id="win-new-game-btn" onclick="goSetup()">Exit</button>
     </div>
   </div>
 </div>
@@ -349,27 +397,9 @@
       </div>
     </div>
 
-    <div class="settings-section-label">Device</div>
-
-    <div class="settings-row">
-      <div class="settings-row-left">
-        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z"/><path d="M12 6v6l4 2"/></svg>
-        <span>Keep Screen On</span>
-      </div>
-      <button class="s-toggle" id="s-keepawake-toggle" onclick="onSettingsKeepAwake()" aria-label="Toggle keep awake"></button>
-    </div>
-
-    <div class="settings-row">
-      <div class="settings-row-left">
-        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 8 2 2-2 2 2 2-2 2"/><path d="m22 8-2 2 2 2-2 2 2 2"/><rect width="8" height="14" x="8" y="5" rx="1"/></svg>
-        <span>Haptic Feedback</span>
-      </div>
-      <button class="s-toggle" id="s-haptic-toggle" onclick="onSettingsHaptic()" aria-label="Toggle haptic feedback"></button>
-    </div>
 
   </div>
 </div>
-
 
 <script>
 /* ── Intro Screen ── */
@@ -522,6 +552,18 @@
 
 <script>
 function setTimedSecsPill(btn, secs) {
+    setTimedSeconds(secs);
+    btn.closest('.mode-row').querySelectorAll('.pill-sm').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+}
+function onOlTimedToggle(btn) {
+    btn.classList.toggle('on');
+    const on = btn.classList.contains('on');
+    setTimedMode(on);
+    const row = document.getElementById('ol-timed-seconds-row');
+    if (row) row.style.display = on ? '' : 'none';
+}
+function setOlTimedPill(btn, secs) {
     setTimedSeconds(secs);
     btn.closest('.mode-row').querySelectorAll('.pill-sm').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
