@@ -2581,6 +2581,7 @@ function _resizeNrCanvas() {
 
 /* Add a canvas animation. drawFn(ctx, progress 0→1, elapsed ms) returns false when done. */
 function nrCanvasAnim(drawFn, duration) {
+    if (lowGfx) return; // canvas animations disabled in low-GFX mode
     nrCanvasInit();
     const anim = { drawFn, duration, start: null };
     _nrAnimations.push(anim);
@@ -3059,18 +3060,141 @@ function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
             }, 700);
             break;
         }
-        case 'tidal_wave':
-            if (target) nrFlashCol(target.c, 'nr-col-flash');
+        case 'airstrike': {
+            if (!target) break;
+            nrFlashCell(target.r, target.c, 'nr-airstrike-target');
+            // Canvas: crosshair lines converging on target, then burst ring
+            const asCenter = nrCellCenter(target.r, target.c);
+            const asColor  = PCOLORS[playerIdx];
+            if (asCenter) nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                const { x, y, w } = asCenter;
+                const arm = w * (1.2 - progress * 0.8);
+                const alpha = Math.max(0, 1 - progress * 1.2);
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.strokeStyle = asColor;
+                ctx.lineWidth = 1.8;
+                // Four crosshair arms closing in
+                ctx.beginPath();
+                ctx.moveTo(x - arm, y); ctx.lineTo(x - w * 0.18, y);
+                ctx.moveTo(x + w * 0.18, y); ctx.lineTo(x + arm, y);
+                ctx.moveTo(x, y - arm); ctx.lineTo(x, y - w * 0.18);
+                ctx.moveTo(x, y + w * 0.18); ctx.lineTo(x, y + arm);
+                ctx.stroke();
+                // Burst ring at end
+                if (progress > 0.55) {
+                    const rp = (progress - 0.55) / 0.45;
+                    ctx.globalAlpha = alpha * (1 - rp);
+                    ctx.beginPath();
+                    ctx.arc(x, y, w * 0.3 + w * 0.7 * rp, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+                ctx.restore();
+                return progress < 1;
+            }, 450);
             break;
-        case 'overgrowth':
-            if (target)
-                for (let dr = -1; dr <= 1; dr++)
-                    for (let dc = -1; dc <= 1; dc++)
-                        nrFlashCell(target.r + dr, target.c + dc, 'nr-overgrowth-bloom', (Math.abs(dr) + Math.abs(dc)) * 25);
+        }
+        case 'tidal_wave': {
+            if (!target) break;
+            nrFlashCol(target.c, 'nr-col-flash');
+            // Canvas: wave ripple expanding horizontally from the column
+            const twColor = PCOLORS[playerIdx];
+            const twC = nrCellCenter(0, target.c);
+            if (twC) nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                const cx = twC.x;
+                const spread = W * progress * 0.9;
+                const alpha = Math.max(0, 1 - progress * 1.1);
+                for (let i = 0; i < 3; i++) {
+                    const off = i * 0.12;
+                    const p2 = Math.max(0, progress - off);
+                    ctx.save();
+                    ctx.globalAlpha = alpha * (1 - i * 0.28);
+                    ctx.strokeStyle = twColor;
+                    ctx.lineWidth = 2 - i * 0.5;
+                    ctx.beginPath();
+                    ctx.moveTo(cx - W * p2 * 0.9, 0);
+                    ctx.lineTo(cx - W * p2 * 0.9, H);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(cx + W * p2 * 0.9, 0);
+                    ctx.lineTo(cx + W * p2 * 0.9, H);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+                return progress < 1;
+            }, 550);
             break;
-        case 'static_field':
+        }
+        case 'overgrowth': {
+            if (!target) break;
+            for (let dr = -1; dr <= 1; dr++)
+                for (let dc = -1; dc <= 1; dc++)
+                    nrFlashCell(target.r + dr, target.c + dc, 'nr-overgrowth-bloom', (Math.abs(dr) + Math.abs(dc)) * 25);
+            // Canvas: spores drift outward from each owned cell in the 3×3
+            const ogColor = PCOLORS[playerIdx];
+            const spores = [];
+            for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+                const r2 = target.r + dr, c2 = target.c + dc;
+                if (r2 < 0 || r2 >= cfg.rows || c2 < 0 || c2 >= cfg.cols) continue;
+                if (S.grid[r2][c2].owner !== playerIdx) continue;
+                const center = nrCellCenter(r2, c2); if (!center) continue;
+                for (let i = 0; i < 5; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    spores.push({ x: center.x, y: center.y, angle, speed: 25 + Math.random() * 20, r: 1.5 + Math.random() });
+                }
+            }
+            if (spores.length) nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                const t = elapsed / 1000;
+                spores.forEach(s => {
+                    const x = s.x + Math.cos(s.angle) * s.speed * t;
+                    const y = s.y + Math.sin(s.angle) * s.speed * t;
+                    ctx.save();
+                    ctx.globalAlpha = Math.max(0, 1 - progress * 1.3);
+                    ctx.fillStyle = ogColor;
+                    ctx.beginPath();
+                    ctx.arc(x, y, s.r * (1 - progress * 0.5), 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                });
+                return progress < 1;
+            }, 500);
+            break;
+        }
+        case 'static_field': {
             nrFlashBoard((r, c) => S.grid[r][c].owner === playerIdx, 'nr-staticfield-shield');
+            // Canvas: electric arcs between adjacent own cells
+            const sfColor = PCOLORS[playerIdx];
+            const sfCells = [];
+            for (let r = 0; r < cfg.rows; r++)
+                for (let c = 0; c < cfg.cols; c++)
+                    if (S.grid[r][c].owner === playerIdx) sfCells.push([r, c]);
+            const arcs = [];
+            sfCells.forEach(([r, c]) => {
+                neighbors(r, c).forEach(([nr, nc]) => {
+                    if (S.grid[nr][nc].owner !== playerIdx || nr * 100 + nc < r * 100 + c) return;
+                    const a = nrCellCenter(r, c), b = nrCellCenter(nr, nc);
+                    if (a && b) arcs.push({ a, b, jitter: Math.random() * 6 - 3 });
+                });
+            });
+            if (arcs.length) nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                const alpha = Math.max(0, Math.sin(progress * Math.PI) * 0.85);
+                arcs.forEach(({ a, b, jitter }) => {
+                    const mx = (a.x + b.x) / 2 + jitter * Math.sin(elapsed * 0.03);
+                    const my = (a.y + b.y) / 2 + jitter * Math.cos(elapsed * 0.03);
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.strokeStyle = sfColor;
+                    ctx.lineWidth = 1.2;
+                    ctx.beginPath();
+                    ctx.moveTo(a.x, a.y);
+                    ctx.quadraticCurveTo(mx, my, b.x, b.y);
+                    ctx.stroke();
+                    ctx.restore();
+                });
+                return progress < 1;
+            }, 500);
             break;
+        }
         case 'phantom_step': {
             if (secondTarget && target) {
                 const srcEl = cellEl(secondTarget.r, secondTarget.c);
@@ -3083,39 +3207,237 @@ function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
                     const ghost = document.createElement('div');
                     ghost.className = 'nr-phantom-ghost';
                     ghost.style.cssText = `position:fixed;left:${srcRect.left+srcRect.width/2}px;top:${srcRect.top+srcRect.height/2}px;width:${srcRect.width*0.45}px;height:${srcRect.width*0.45}px;background:${PCOLORS[playerIdx]}55;border:1.5px solid ${PCOLORS[playerIdx]};border-radius:50%;pointer-events:none;z-index:999;transform:translate(-50%,-50%);transition:left 280ms ease-in-out,top 280ms ease-in-out,opacity 280ms;`;
-                    document.body.appendChild(ghost);
-                    requestAnimationFrame(() => requestAnimationFrame(() => {
-                        ghost.style.left = `${dstRect.left+dstRect.width/2}px`;
-                        ghost.style.top  = `${dstRect.top+dstRect.height/2}px`;
-                        ghost.style.opacity = '0';
-                    }));
-                    setTimeout(() => ghost.remove(), 400);
+                    if (!lowGfx) {
+                        document.body.appendChild(ghost);
+                        requestAnimationFrame(() => requestAnimationFrame(() => {
+                            ghost.style.left = `${dstRect.left+dstRect.width/2}px`;
+                            ghost.style.top  = `${dstRect.top+dstRect.height/2}px`;
+                            ghost.style.opacity = '0';
+                        }));
+                        setTimeout(() => ghost.remove(), 400);
+                    }
                 }
+                // Canvas: ghost trail — fading orb copies along the path
+                const psColor = PCOLORS[playerIdx];
+                const psSrc = nrCellCenter(secondTarget.r, secondTarget.c);
+                const psDst = nrCellCenter(target.r, target.c);
+                if (psSrc && psDst) nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                    const steps = 6;
+                    for (let i = 0; i < steps; i++) {
+                        const t = i / steps;
+                        if (t > progress * 1.5) continue;
+                        const x = psSrc.x + (psDst.x - psSrc.x) * t;
+                        const y = psSrc.y + (psDst.y - psSrc.y) * t;
+                        const alpha = Math.max(0, (1 - progress * 1.2) * (1 - t * 0.6));
+                        ctx.save();
+                        ctx.globalAlpha = alpha;
+                        ctx.strokeStyle = psColor;
+                        ctx.lineWidth = 1.2;
+                        ctx.beginPath();
+                        ctx.arc(x, y, psSrc.w * 0.2 * (1 - t * 0.5), 0, Math.PI * 2);
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                    return progress < 1;
+                }, 380);
             }
             break;
         }
-        case 'swap':
+        case 'swap': {
             if (secondTarget) nrFlashCell(secondTarget.r, secondTarget.c, 'nr-swap-flash');
             if (target)       nrFlashCell(target.r, target.c, 'nr-swap-flash');
+            // Canvas: two orbs cross each other along curved paths
+            const swColor = PCOLORS[playerIdx];
+            const swA = secondTarget ? nrCellCenter(secondTarget.r, secondTarget.c) : null;
+            const swB = target        ? nrCellCenter(target.r, target.c)             : null;
+            if (swA && swB) nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                const t = Math.min(progress * 1.2, 1);
+                const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
+                // A → B
+                const ax = swA.x + (swB.x - swA.x) * ease + (swB.y - swA.y) * 0.3 * Math.sin(ease * Math.PI);
+                const ay = swA.y + (swB.y - swA.y) * ease - (swB.x - swA.x) * 0.3 * Math.sin(ease * Math.PI);
+                // B → A
+                const bx = swB.x + (swA.x - swB.x) * ease - (swA.y - swB.y) * 0.3 * Math.sin(ease * Math.PI);
+                const by = swB.y + (swA.y - swB.y) * ease + (swA.x - swB.x) * 0.3 * Math.sin(ease * Math.PI);
+                const alpha = Math.max(0, 1 - progress * 1.3);
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = swColor;
+                ctx.beginPath(); ctx.arc(ax, ay, swA.w * 0.18, 0, Math.PI * 2); ctx.fill();
+                ctx.globalAlpha = alpha * 0.7;
+                ctx.beginPath(); ctx.arc(bx, by, swB.w * 0.18, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+                return progress < 1;
+            }, 420);
             break;
-        case 'permafrost':
-            if (target) {
-                nrFlashCell(target.r, target.c, 'nr-permafrost-hit');
-                neighbors(target.r, target.c).forEach(([nr, nc]) => nrFlashCell(nr, nc, 'nr-permafrost-hit', 80));
+        }
+        case 'permafrost': {
+            if (!target) break;
+            nrFlashCell(target.r, target.c, 'nr-permafrost-hit');
+            neighbors(target.r, target.c).forEach(([nr, nc]) => nrFlashCell(nr, nc, 'nr-permafrost-hit', 80));
+            // Canvas: ice crystal shards radiate from target, smaller secondary burst on each neighbor
+            const pfColor = PCOLORS[playerIdx];
+            const pfCenter = nrCellCenter(target.r, target.c);
+            if (pfCenter) nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                const { x, y, w } = pfCenter;
+                const alpha = Math.max(0, 1 - progress * 1.1);
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.strokeStyle = pfColor;
+                // 8 shards from center
+                for (let i = 0; i < 8; i++) {
+                    const angle = (i / 8) * Math.PI * 2;
+                    const len = w * 0.7 * progress;
+                    ctx.lineWidth = i % 2 === 0 ? 1.8 : 1;
+                    ctx.beginPath();
+                    ctx.moveTo(x, y);
+                    ctx.lineTo(x + Math.cos(angle) * len, y + Math.sin(angle) * len);
+                    ctx.stroke();
+                }
+                // Expanding ring
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.arc(x, y, w * 0.55 * progress, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+                return progress < 1;
+            }, 500);
+            break;
+        }
+        case 'ice_wall': {
+            nrFlashBoard((r, c) => S.grid[r][c].owner === playerIdx, 'nr-icewall-shimmer');
+            // Canvas: shield hexagonal pulse expanding from each own cell
+            const iwColor = PCOLORS[playerIdx];
+            const iwCells = [];
+            for (let r = 0; r < cfg.rows; r++)
+                for (let c = 0; c < cfg.cols; c++)
+                    if (S.grid[r][c].owner === playerIdx) iwCells.push(nrCellCenter(r, c));
+            nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                const alpha = Math.max(0, Math.sin(progress * Math.PI) * 0.8);
+                iwCells.forEach(center => {
+                    if (!center) return;
+                    const r = center.w * (0.5 + progress * 0.4);
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.strokeStyle = iwColor;
+                    ctx.lineWidth = 1.5;
+                    // Hexagon
+                    ctx.beginPath();
+                    for (let i = 0; i < 6; i++) {
+                        const a = (i / 6) * Math.PI * 2 - Math.PI / 6;
+                        i === 0 ? ctx.moveTo(center.x + Math.cos(a)*r, center.y + Math.sin(a)*r)
+                                : ctx.lineTo(center.x + Math.cos(a)*r, center.y + Math.sin(a)*r);
+                    }
+                    ctx.closePath();
+                    ctx.stroke();
+                    ctx.restore();
+                });
+                return progress < 1;
+            }, 550);
+            break;
+        }
+        case 'ignite': {
+            if (target) nrFlashCell(target.r, target.c, 'nr-ignite-mark');
+            // Canvas: fire sparks burst upward from target cell
+            const igColor = PCOLORS[playerIdx];
+            const igCenter = target ? nrCellCenter(target.r, target.c) : null;
+            if (igCenter) {
+                const sparks = [];
+                for (let i = 0; i < 10; i++) {
+                    sparks.push({
+                        x: igCenter.x + (Math.random() - 0.5) * igCenter.w * 0.4,
+                        y: igCenter.y,
+                        vx: (Math.random() - 0.5) * 22,
+                        vy: -(28 + Math.random() * 30),
+                        r: 2 + Math.random() * 1.5
+                    });
+                }
+                nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                    const t = elapsed / 1000;
+                    sparks.forEach(s => {
+                        const x = s.x + s.vx * t;
+                        const y = s.y + s.vy * t + 60 * t * t; // gravity pulls back
+                        const alpha = Math.max(0, 1 - progress * 1.2);
+                        ctx.save();
+                        ctx.globalAlpha = alpha;
+                        ctx.fillStyle = igColor;
+                        ctx.beginPath();
+                        ctx.arc(x, y, s.r * (1 - progress * 0.6), 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.restore();
+                    });
+                    return progress < 1;
+                }, 500);
             }
             break;
-        case 'ice_wall':
-            nrFlashBoard((r, c) => S.grid[r][c].owner === playerIdx, 'nr-icewall-shimmer');
-            break;
-        case 'ignite':
-            if (target) nrFlashCell(target.r, target.c, 'nr-ignite-mark');
-            break;
-        case 'ember':
+        }
+        case 'ember': {
             if (target)
                 for (let dr = 0; dr <= 1; dr++)
                     for (let dc = 0; dc <= 1; dc++)
                         nrFlashCell(target.r + dr, target.c + dc, 'nr-ember-mark', (dr + dc) * 60);
+            // Canvas: flame lick rising from each marked own cell
+            const emColor = PCOLORS[playerIdx];
+            const emCells = [];
+            if (target)
+                for (let dr = 0; dr <= 1; dr++) for (let dc = 0; dc <= 1; dc++) {
+                    const r2 = target.r + dr, c2 = target.c + dc;
+                    if (r2 >= cfg.rows || c2 >= cfg.cols) continue;
+                    if (S.grid[r2][c2].owner === playerIdx) { const c = nrCellCenter(r2, c2); if (c) emCells.push(c); }
+                }
+            if (emCells.length) nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                const t = elapsed / 1000;
+                emCells.forEach(center => {
+                    for (let i = 0; i < 4; i++) {
+                        const phase = (t * 2 + i * 0.4) % 1;
+                        const x = center.x + (i - 1.5) * center.w * 0.18;
+                        const y = center.y - center.h * 0.3 - phase * center.h * 0.7;
+                        const alpha = Math.max(0, (1 - phase) * (1 - progress * 1.1));
+                        ctx.save();
+                        ctx.globalAlpha = alpha;
+                        ctx.fillStyle = emColor;
+                        ctx.beginPath();
+                        ctx.arc(x, y, (1 - phase) * 3.5, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.restore();
+                    }
+                });
+                return progress < 1;
+            }, 550);
             break;
+        }
+        case 'infect': {
+            if (target) nrFlashCell(target.r, target.c, 'nr-infect-mark-flash');
+            // Canvas: pulsing ring that expands and contracts on target cell
+            const inColor = PCOLORS[playerIdx];
+            const inCenter = target ? nrCellCenter(target.r, target.c) : null;
+            if (inCenter) nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                const { x, y, w } = inCenter;
+                const pulse = Math.sin(progress * Math.PI * 3);
+                const r = w * (0.35 + pulse * 0.15);
+                const alpha = Math.max(0, 1 - progress * 1.1);
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.strokeStyle = inColor;
+                ctx.lineWidth = 1.8;
+                ctx.setLineDash([3, 3]);
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                // Dots at 4 points of the ring
+                ctx.fillStyle = inColor;
+                for (let i = 0; i < 4; i++) {
+                    const a = (i / 4) * Math.PI * 2 + progress * Math.PI * 2;
+                    ctx.beginPath();
+                    ctx.arc(x + Math.cos(a) * r, y + Math.sin(a) * r, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.restore();
+                return progress < 1;
+            }, 550);
+            break;
+        }
         case 'corrode': {
             // CSS flash on the 2×2 area
             if (target)
