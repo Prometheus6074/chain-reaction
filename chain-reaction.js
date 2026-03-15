@@ -2665,9 +2665,39 @@ function nrFlashCard(playerIdx, cls) {
 
 function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
     switch (abilId) {
-        case 'airstrike':
-            if (target) nrFlashCell(target.r, target.c, 'nr-airstrike-target');
+        case 'carpet_bomb': {
+            if (!target) break;
+            nrFlashRow(target.r, 'nr-row-flash');
+            // Canvas: horizontal sweep line crossing the row
+            const cbColor = PCOLORS[playerIdx];
+            const leftCell  = nrCellCenter(target.r, 0);
+            const rightCell = nrCellCenter(target.r, cfg.cols - 1);
+            if (leftCell && rightCell) nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                const y  = leftCell.y;
+                const x0 = leftCell.x  - leftCell.w * 0.5;
+                const x1 = rightCell.x + rightCell.w * 0.5;
+                const sweepX = x0 + (x1 - x0) * Math.min(progress * 1.6, 1);
+                const alpha  = Math.max(0, 1 - progress * 1.1);
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.strokeStyle = cbColor;
+                ctx.lineWidth = 2.5;
+                ctx.beginPath();
+                ctx.moveTo(x0, y); ctx.lineTo(sweepX, y);
+                ctx.stroke();
+                // Bright leading tip
+                ctx.globalAlpha = alpha * 1.4;
+                ctx.lineWidth = 4;
+                const tipLen = leftCell.w * 0.6;
+                ctx.beginPath();
+                ctx.moveTo(Math.max(x0, sweepX - tipLen), y);
+                ctx.lineTo(sweepX, y);
+                ctx.stroke();
+                ctx.restore();
+                return progress < 1;
+            }, 480);
             break;
+        }
         case 'detonation_wave': {
             // CSS flash
             nrFlashBoard((r, c) => {
@@ -3063,35 +3093,40 @@ function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
         case 'airstrike': {
             if (!target) break;
             nrFlashCell(target.r, target.c, 'nr-airstrike-target');
-            // Canvas: crosshair lines converging on target, then burst ring
             const asCenter = nrCellCenter(target.r, target.c);
             const asColor  = PCOLORS[playerIdx];
             if (asCenter) nrCanvasAnim((ctx, progress, elapsed, W, H) => {
                 const { x, y, w } = asCenter;
-                const arm = w * (1.2 - progress * 0.8);
-                const alpha = Math.max(0, 1 - progress * 1.2);
+                const arm = w * (2.8 - progress * 2.3);
+                const gap = w * 0.22;
+                const alpha = Math.max(0, 1 - progress * 1.1);
                 ctx.save();
                 ctx.globalAlpha = alpha;
                 ctx.strokeStyle = asColor;
-                ctx.lineWidth = 1.8;
-                // Four crosshair arms closing in
+                ctx.lineWidth = 2.5;
                 ctx.beginPath();
-                ctx.moveTo(x - arm, y); ctx.lineTo(x - w * 0.18, y);
-                ctx.moveTo(x + w * 0.18, y); ctx.lineTo(x + arm, y);
-                ctx.moveTo(x, y - arm); ctx.lineTo(x, y - w * 0.18);
-                ctx.moveTo(x, y + w * 0.18); ctx.lineTo(x, y + arm);
+                ctx.moveTo(x - arm - gap, y); ctx.lineTo(x - gap, y);
+                ctx.moveTo(x + gap, y);       ctx.lineTo(x + arm + gap, y);
+                ctx.moveTo(x, y - arm - gap); ctx.lineTo(x, y - gap);
+                ctx.moveTo(x, y + gap);       ctx.lineTo(x, y + arm + gap);
                 ctx.stroke();
-                // Burst ring at end
-                if (progress > 0.55) {
-                    const rp = (progress - 0.55) / 0.45;
-                    ctx.globalAlpha = alpha * (1 - rp);
+                ctx.lineWidth = 2;
+                const tk = w * 0.35;
+                [[x-gap,y-gap,-1,-1],[x+gap,y-gap,1,-1],[x-gap,y+gap,-1,1],[x+gap,y+gap,1,1]].forEach(([cx2,cy2,sx,sy]) => {
                     ctx.beginPath();
-                    ctx.arc(x, y, w * 0.3 + w * 0.7 * rp, 0, Math.PI * 2);
+                    ctx.moveTo(cx2,cy2-sy*tk*0.5); ctx.lineTo(cx2,cy2); ctx.lineTo(cx2+sx*tk*0.5,cy2); ctx.stroke();
+                });
+                if (progress > 0.5) {
+                    const rp = (progress - 0.5) / 0.5;
+                    ctx.globalAlpha = alpha * (1 - rp);
+                    ctx.lineWidth = 2.5;
+                    ctx.beginPath();
+                    ctx.arc(x, y, w * 0.4 + w * 1.2 * rp, 0, Math.PI * 2);
                     ctx.stroke();
                 }
                 ctx.restore();
                 return progress < 1;
-            }, 450);
+            }, 550);
             break;
         }
         case 'tidal_wave': {
@@ -3130,19 +3165,28 @@ function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
             for (let dr = -1; dr <= 1; dr++)
                 for (let dc = -1; dc <= 1; dc++)
                     nrFlashCell(target.r + dr, target.c + dc, 'nr-overgrowth-bloom', (Math.abs(dr) + Math.abs(dc)) * 25);
-            // Canvas: spores drift outward from each owned cell in the 3×3
             const ogColor = PCOLORS[playerIdx];
             const spores = [];
+            // Collect owned cells in area; if none, use the target cell itself as origin
+            const origins = [];
             for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
                 const r2 = target.r + dr, c2 = target.c + dc;
                 if (r2 < 0 || r2 >= cfg.rows || c2 < 0 || c2 >= cfg.cols) continue;
-                if (S.grid[r2][c2].owner !== playerIdx) continue;
-                const center = nrCellCenter(r2, c2); if (!center) continue;
-                for (let i = 0; i < 5; i++) {
-                    const angle = Math.random() * Math.PI * 2;
-                    spores.push({ x: center.x, y: center.y, angle, speed: 25 + Math.random() * 20, r: 1.5 + Math.random() });
+                if (S.grid[r2][c2].owner === playerIdx) {
+                    const center = nrCellCenter(r2, c2);
+                    if (center) origins.push(center);
                 }
             }
+            if (!origins.length) {
+                const fallback = nrCellCenter(target.r, target.c);
+                if (fallback) origins.push(fallback);
+            }
+            origins.forEach(center => {
+                for (let i = 0; i < 8; i++) {
+                    const angle = (i / 8) * Math.PI * 2 + Math.random() * 0.4;
+                    spores.push({ x: center.x, y: center.y, angle, speed: 30 + Math.random() * 25, r: 2 + Math.random() * 1.5 });
+                }
+            });
             if (spores.length) nrCanvasAnim((ctx, progress, elapsed, W, H) => {
                 const t = elapsed / 1000;
                 spores.forEach(s => {
@@ -3157,7 +3201,7 @@ function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
                     ctx.restore();
                 });
                 return progress < 1;
-            }, 500);
+            }, 550);
             break;
         }
         case 'static_field': {
@@ -3201,74 +3245,85 @@ function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
                 const dstEl = cellEl(target.r, target.c);
                 nrFlashCell(secondTarget.r, secondTarget.c, 'nr-phantom-src');
                 nrFlashCell(target.r, target.c, 'nr-phantom-dst');
-                if (srcEl && dstEl) {
+                if (srcEl && dstEl && !lowGfx) {
                     const srcRect = srcEl.getBoundingClientRect();
                     const dstRect = dstEl.getBoundingClientRect();
                     const ghost = document.createElement('div');
                     ghost.className = 'nr-phantom-ghost';
                     ghost.style.cssText = `position:fixed;left:${srcRect.left+srcRect.width/2}px;top:${srcRect.top+srcRect.height/2}px;width:${srcRect.width*0.45}px;height:${srcRect.width*0.45}px;background:${PCOLORS[playerIdx]}55;border:1.5px solid ${PCOLORS[playerIdx]};border-radius:50%;pointer-events:none;z-index:999;transform:translate(-50%,-50%);transition:left 280ms ease-in-out,top 280ms ease-in-out,opacity 280ms;`;
-                    if (!lowGfx) {
-                        document.body.appendChild(ghost);
-                        requestAnimationFrame(() => requestAnimationFrame(() => {
-                            ghost.style.left = `${dstRect.left+dstRect.width/2}px`;
-                            ghost.style.top  = `${dstRect.top+dstRect.height/2}px`;
-                            ghost.style.opacity = '0';
-                        }));
-                        setTimeout(() => ghost.remove(), 400);
-                    }
+                    document.body.appendChild(ghost);
+                    requestAnimationFrame(() => requestAnimationFrame(() => {
+                        ghost.style.left = `${dstRect.left+dstRect.width/2}px`;
+                        ghost.style.top  = `${dstRect.top+dstRect.height/2}px`;
+                        ghost.style.opacity = '0';
+                    }));
+                    setTimeout(() => ghost.remove(), 400);
                 }
-                // Canvas: ghost trail — fading orb copies along the path
+                // Canvas: 24 ghost orb circles fading along the path
                 const psColor = PCOLORS[playerIdx];
                 const psSrc = nrCellCenter(secondTarget.r, secondTarget.c);
                 const psDst = nrCellCenter(target.r, target.c);
                 if (psSrc && psDst) nrCanvasAnim((ctx, progress, elapsed, W, H) => {
-                    const steps = 6;
+                    const steps = 24;
                     for (let i = 0; i < steps; i++) {
-                        const t = i / steps;
-                        if (t > progress * 1.5) continue;
+                        const t = i / (steps - 1);
+                        // Stagger reveal: each circle appears as progress sweeps past it
+                        const revealAt = t * 0.6;
+                        if (progress < revealAt) continue;
+                        const localProgress = Math.min((progress - revealAt) / 0.4, 1);
                         const x = psSrc.x + (psDst.x - psSrc.x) * t;
                         const y = psSrc.y + (psDst.y - psSrc.y) * t;
-                        const alpha = Math.max(0, (1 - progress * 1.2) * (1 - t * 0.6));
+                        const baseAlpha = 1 - t * 0.65; // trail fades toward destination
+                        const alpha = Math.max(0, baseAlpha * (1 - localProgress * 1.2));
+                        const r = psSrc.w * 0.22 * (1 - t * 0.4) * (1 - localProgress * 0.5);
                         ctx.save();
                         ctx.globalAlpha = alpha;
                         ctx.strokeStyle = psColor;
-                        ctx.lineWidth = 1.2;
+                        ctx.lineWidth = 1.5;
                         ctx.beginPath();
-                        ctx.arc(x, y, psSrc.w * 0.2 * (1 - t * 0.5), 0, Math.PI * 2);
+                        ctx.arc(x, y, r, 0, Math.PI * 2);
                         ctx.stroke();
                         ctx.restore();
                     }
                     return progress < 1;
-                }, 380);
+                }, 480);
             }
             break;
         }
         case 'swap': {
             if (secondTarget) nrFlashCell(secondTarget.r, secondTarget.c, 'nr-swap-flash');
             if (target)       nrFlashCell(target.r, target.c, 'nr-swap-flash');
-            // Canvas: two orbs cross each other along curved paths
+            // Canvas: 24 ghost circles on each path — two trails crossing each other
             const swColor = PCOLORS[playerIdx];
             const swA = secondTarget ? nrCellCenter(secondTarget.r, secondTarget.c) : null;
             const swB = target        ? nrCellCenter(target.r, target.c)             : null;
             if (swA && swB) nrCanvasAnim((ctx, progress, elapsed, W, H) => {
-                const t = Math.min(progress * 1.2, 1);
-                const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
-                // A → B
-                const ax = swA.x + (swB.x - swA.x) * ease + (swB.y - swA.y) * 0.3 * Math.sin(ease * Math.PI);
-                const ay = swA.y + (swB.y - swA.y) * ease - (swB.x - swA.x) * 0.3 * Math.sin(ease * Math.PI);
-                // B → A
-                const bx = swB.x + (swA.x - swB.x) * ease - (swA.y - swB.y) * 0.3 * Math.sin(ease * Math.PI);
-                const by = swB.y + (swA.y - swB.y) * ease + (swA.x - swB.x) * 0.3 * Math.sin(ease * Math.PI);
-                const alpha = Math.max(0, 1 - progress * 1.3);
-                ctx.save();
-                ctx.globalAlpha = alpha;
-                ctx.fillStyle = swColor;
-                ctx.beginPath(); ctx.arc(ax, ay, swA.w * 0.18, 0, Math.PI * 2); ctx.fill();
-                ctx.globalAlpha = alpha * 0.7;
-                ctx.beginPath(); ctx.arc(bx, by, swB.w * 0.18, 0, Math.PI * 2); ctx.fill();
-                ctx.restore();
+                const steps = 24;
+                for (let i = 0; i < steps; i++) {
+                    const t = i / (steps - 1);
+                    const revealAt = t * 0.6;
+                    if (progress < revealAt) continue;
+                    const localProgress = Math.min((progress - revealAt) / 0.4, 1);
+                    const ease = t < 0.5 ? 2*t*t : -1+(4-2*t)*t;
+                    // Trail A: swA → swB (curves one way)
+                    const ax = swA.x + (swB.x - swA.x) * ease + (swB.y - swA.y) * 0.4 * Math.sin(t * Math.PI);
+                    const ay = swA.y + (swB.y - swA.y) * ease - (swB.x - swA.x) * 0.4 * Math.sin(t * Math.PI);
+                    // Trail B: swB → swA (curves other way)
+                    const bx = swB.x + (swA.x - swB.x) * ease - (swA.y - swB.y) * 0.4 * Math.sin(t * Math.PI);
+                    const by = swB.y + (swA.y - swB.y) * ease + (swA.x - swB.x) * 0.4 * Math.sin(t * Math.PI);
+                    const alpha = Math.max(0, (1 - t * 0.5) * (1 - localProgress * 1.2));
+                    const r = swA.w * 0.2 * (1 - t * 0.3) * (1 - localProgress * 0.5);
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.strokeStyle = swColor;
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath(); ctx.arc(ax, ay, r, 0, Math.PI * 2); ctx.stroke();
+                    ctx.globalAlpha = alpha * 0.75;
+                    ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.stroke();
+                    ctx.restore();
+                }
                 return progress < 1;
-            }, 420);
+            }, 500);
             break;
         }
         case 'permafrost': {
@@ -3498,9 +3553,6 @@ function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
             }, 650);
             break;
         }
-        case 'infect':
-            if (target) nrFlashCell(target.r, target.c, 'nr-infect-mark-flash');
-            break;
         case 'decay':
             // Per-cell BFS animation handled inside the ability case
             break;
