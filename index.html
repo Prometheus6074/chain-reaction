@@ -88,6 +88,13 @@
           <button class="pill pill-sm"        data-secs="300" onclick="setTimedSecsPill(this,300)">5 min</button>
         </div>
       </div>
+      <div class="mode-row">
+        <label class="mode-label">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          Nuclear Reaction
+        </label>
+        <button class="s-toggle" id="nuclear-mode-toggle" onclick="this.classList.toggle('on'); setNuclearMode(this.classList.contains('on'))" aria-label="Toggle nuclear reaction mode"></button>
+      </div>
     </div>
     <button class="start-btn" id="start-btn" onclick="startGame()" disabled>Start Game</button>
     <div class="or-divider"><span>or</span></div>
@@ -180,6 +187,13 @@
             <button class="pill pill-sm"        data-secs="300" onclick="setOlTimedPill(this,300)">5 min</button>
           </div>
         </div>
+        <div class="mode-row">
+          <label class="mode-label">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            Nuclear Reaction
+          </label>
+          <button class="s-toggle" id="ol-nuclear-toggle" onclick="onOlNuclearToggle(this)" aria-label="Toggle nuclear reaction mode"></button>
+        </div>
       </div>
       <button class="start-btn" onclick="createRoom()">Create Room →</button>
       <button class="ghost-btn" style="align-self:center;margin-top:4px" onclick="showOlMode()">← Back</button>
@@ -271,6 +285,10 @@
   <div id="online-turn-hint" class="online-turn-hint"></div>
   <div id="turn-timer" class="turn-timer" style="display:none">
     <div id="turn-timer-bar"></div>
+  </div>
+  <div id="nr-targeting-bar" style="display:none">
+    <span id="nr-targeting-label">Select a target</span>
+    <button class="ghost-btn" id="nr-cancel-btn" onclick="nrCancelTargeting()" style="display:none;font-size:11px;padding:3px 10px">Cancel</button>
   </div>
   <div id="grid-row">
     <div class="game-foot" style="margin-top:0;margin-bottom:4px;grid-column:1/-1">
@@ -567,6 +585,10 @@ function setOlTimedPill(btn, secs) {
     setTimedSeconds(secs);
     btn.closest('.mode-row').querySelectorAll('.pill-sm').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+}
+function onOlNuclearToggle(btn) {
+    btn.classList.toggle('on');
+    setNuclearMode(btn.classList.contains('on'));
 }
 </script>
 </body>

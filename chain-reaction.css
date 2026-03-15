@@ -2387,3 +2387,175 @@ body.skin-numbered .orb-count-badge {
     min-height: 16px;
     letter-spacing: .05em;
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   NUCLEAR REACTION MODE
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── Meter bar on player card ── */
+.nr-meter-wrap {
+    width: 100%;
+    height: 4px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 2px;
+    margin-top: 4px;
+    overflow: hidden;
+}
+.nr-meter-bar {
+    height: 100%;
+    width: 0%;
+    border-radius: 2px;
+    transition: width 0.3s ease;
+}
+
+/* ── Character / ability label row ── */
+.nr-char-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 3px;
+    gap: 4px;
+}
+.nr-char-name {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: var(--dim);
+    letter-spacing: .04em;
+    text-transform: uppercase;
+}
+.nr-ability-name {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px;
+    color: var(--dim);
+    letter-spacing: .03em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 72px;
+}
+
+/* ── Ready state: pulsing glow on card ── */
+.pcard.nr-ready {
+    animation: nr-pulse 1.2s ease-in-out infinite;
+    cursor: pointer;
+}
+@keyframes nr-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 var(--pc, #fff)44; }
+    50%       { box-shadow: 0 0 0 6px var(--pc, #fff)00; }
+}
+.pcard.nr-ready .nr-meter-bar {
+    animation: nr-bar-pulse 1.2s ease-in-out infinite;
+}
+@keyframes nr-bar-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.5; }
+}
+.pcard.nr-ready .nr-ability-name {
+    color: var(--pc, #fff);
+}
+
+/* ── Targeting mode: cell highlights ── */
+#grid.nr-targeting .cell.nr-valid {
+    outline: 2px solid rgba(255,255,255,0.7);
+    outline-offset: -2px;
+    cursor: crosshair;
+}
+#grid.nr-targeting .cell.nr-invalid {
+    opacity: 0.35;
+    pointer-events: none;
+}
+#grid.nr-targeting .cell.nr-selected {
+    outline: 2px solid #ffcc00;
+    outline-offset: -2px;
+    background: #ffcc0022;
+}
+
+/* ── Targeting player cards ── */
+.pcard.nr-valid-player {
+    outline: 2px solid rgba(255,255,255,0.6);
+    outline-offset: 2px;
+    cursor: pointer;
+    animation: nr-pulse 1s ease-in-out infinite;
+}
+
+/* ── Targeting instruction bar ── */
+#nr-targeting-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 5px 12px;
+    background: rgba(255,255,255,0.07);
+    border-radius: 6px;
+    margin: 2px 0;
+}
+#nr-targeting-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 11px;
+    color: var(--dim);
+    letter-spacing: .04em;
+}
+
+/* ── Frozen cell indicator ── */
+.cell.nr-frozen {
+    filter: brightness(0.55) hue-rotate(160deg);
+}
+.cell.nr-frozen::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(0,200,255,0.15);
+    border-radius: inherit;
+    pointer-events: none;
+}
+
+/* ── Infect mark on cell ── */
+.cell .nr-infect-dot {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #aaff33;
+    box-shadow: 0 0 4px #aaff33;
+    pointer-events: none;
+}
+
+/* ── Backdraft mark ── */
+.cell .nr-backdraft-dot {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #ff6633;
+    box-shadow: 0 0 4px #ff6633;
+    pointer-events: none;
+}
+
+/* ── Ignite timer dot ── */
+.cell .nr-ignite-dot {
+    position: absolute;
+    bottom: 3px;
+    right: 3px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #ff6633;
+    box-shadow: 0 0 6px #ff6633cc;
+    animation: nr-ignite-blink 0.6s ease-in-out infinite;
+    pointer-events: none;
+}
+@keyframes nr-ignite-blink {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.2; }
+}
+
+/* Void Rift 2x2 hover preview */
+.cell.nr-void-preview {
+    outline: 2px solid #cc44ff;
+    outline-offset: -2px;
+    background: rgba(204, 68, 255, 0.18);
+}
