@@ -1039,6 +1039,7 @@ function launchOnlineGame(room) {
     syncUndoBtn();
     updateOnlineInteractivity();
     setupChat();
+    if (nuclearMode) nrCanvasInit();
 
     requestWakeLock();
     startPlayerTimer();
@@ -1427,7 +1428,7 @@ function serializeState(state) {
             o: cell.owner, c: cell.count,
             fr: cell.frozen || 0, inf: cell.infect ?? -1,
             bdr: cell.backdraft ?? -1, ign: cell.ignite || 0,
-            cry: cell._cryoFrozen ? 1 : 0, fby: cell.frozenBy ?? -1, igo: cell.igniteOwner ?? -1
+            cry: cell._cryoFrozen ? 1 : 0, fby: cell.frozenBy ?? -1, igo: cell.igniteOwner ?? -1, azf: cell._absZeroFrozen ? 1 : 0
             // _airstrikeOwner is intentionally excluded — transient, never persisted
         }))),
         current: state.current,
@@ -1466,7 +1467,7 @@ function deserializeState(data) {
                 owner: cell.o, count: cell.c,
                 frozen: cell.fr || 0, infect: cell.inf ?? -1,
                 backdraft: cell.bdr ?? -1, ignite: cell.ign || 0,
-                _cryoFrozen: !!(cell.cry), frozenBy: cell.fby ?? -1, igniteOwner: cell.igo ?? -1
+                _cryoFrozen: !!(cell.cry), frozenBy: cell.fby ?? -1, igniteOwner: cell.igo ?? -1, _absZeroFrozen: !!(cell.azf)
             }))),
         current: data.current,
         orbCount: toArr(data.orbCount),
@@ -1511,6 +1512,7 @@ function startGame() {
     hideCombo(true);
     markAllDirty(); renderAll();
     syncUndoBtn();
+    if (nuclearMode) nrCanvasInit();
     if (IS_AI[0]) scheduleAiTurn();
     else setGridInteractive(true);
     requestWakeLock();
@@ -1528,7 +1530,7 @@ function initState() {
             Array.from({ length: cfg.cols }, () => ({
                 owner: -1, count: 0,
                 // NR per-cell fields (always present, ignored when !nuclearMode)
-                frozen: 0, infect: -1, backdraft: -1, ignite: 0, _cryoFrozen: false, frozenBy: -1, igniteOwner: -1
+                frozen: 0, infect: -1, backdraft: -1, ignite: 0, _cryoFrozen: false, frozenBy: -1, igniteOwner: -1, _absZeroFrozen: false
             }))),
         current: 0,
         orbCount: new Array(np).fill(0),
@@ -1557,7 +1559,7 @@ function cloneState() {
             owner: cell.owner, count: cell.count,
             frozen: cell.frozen || 0, infect: cell.infect ?? -1,
             backdraft: cell.backdraft ?? -1, ignite: cell.ignite || 0,
-            _cryoFrozen: !!cell._cryoFrozen, frozenBy: cell.frozenBy ?? -1, igniteOwner: cell.igniteOwner ?? -1
+            _cryoFrozen: !!cell._cryoFrozen, frozenBy: cell.frozenBy ?? -1, igniteOwner: cell.igniteOwner ?? -1, _absZeroFrozen: !!cell._absZeroFrozen
         }))),
         current: S.current,
         orbCount: [...S.orbCount],
@@ -2417,8 +2419,8 @@ async function handleClick(r, c) {
                     if (cell.frozen > 0) {
                         cell.frozen--;
                         if (cell.frozen === 0) {
-                            if (cell._cryoFrozen) {
-                                // Shatter: frozen cell explodes in Cryo's color when freeze expires
+                            if (cell._absZeroFrozen) {
+                                // Shatter: Absolute Zero cell explodes in Cryo's color when freeze expires
                                 const shatterOwner = cell.frozenBy;
                                 cell._airstrikeOwner = shatterOwner;
                                 const cm = critMass(r2, c2);
@@ -2429,23 +2431,24 @@ async function handleClick(r, c) {
                                     if (cell.owner < 0) cell.owner = countOwner;
                                 }
                                 cell._cryoFrozen = false;
+                                cell._absZeroFrozen = false;
                                 cell.frozenBy = -1;
-                                // Queue for chainReact — will fire in nrProcessTurnStartCells
                                 cell.ignite = 1;
                                 cell.igniteOwner = shatterOwner;
                             } else {
-                                cell.frozenBy = -1; cell._cryoFrozen = false;
+                                // Permafrost: just thaw normally, no shatter
+                                cell.frozenBy = -1; cell._cryoFrozen = false; cell._absZeroFrozen = false;
                             }
                         }
                         markDirty(r2, c2);
                     }
                 }
             }
-            // Absolute Zero: re-freeze any enemy that is now at critMass - 1 while a Cryo freeze is active
+            // Absolute Zero: re-freeze any enemy that is now at critMass - 1 while an Abs Zero freeze is active
             const cryoActive = (() => {
                 for (let r2 = 0; r2 < cfg.rows; r2++)
                     for (let c2 = 0; c2 < cfg.cols; c2++)
-                        if (S.grid[r2][c2].frozen > 0 && S.grid[r2][c2]._cryoFrozen) return S.grid[r2][c2].frozenBy;
+                        if (S.grid[r2][c2].frozen > 0 && S.grid[r2][c2]._absZeroFrozen) return S.grid[r2][c2].frozenBy;
                 return -1;
             })();
             if (cryoActive >= 0) {
@@ -2527,6 +2530,107 @@ async function handleClick(r, c) {
     }
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   NR CANVAS ANIMATION LAYER
+   A single overlay canvas sits above the grid. Canvas animations
+   are short-lived and run at a capped 60fps to stay lightweight.
+   ══════════════════════════════════════════════════════════════════ */
+const NR_CANVAS_FPS  = 60;
+const NR_CANVAS_FRAME = 1000 / NR_CANVAS_FPS;
+
+let _nrCanvas    = null;
+let _nrCtx       = null;
+let _nrAnimations = []; // active animation objects
+let _nrRafId     = null;
+let _nrRafLast   = null;
+
+function nrCanvasInit() {
+    if (_nrCanvas) return;
+    const gridEl = document.getElementById('grid');
+    if (!gridEl) return;
+    _nrCanvas = document.createElement('canvas');
+    _nrCanvas.id = 'nr-canvas';
+    _nrCanvas.style.cssText = `
+        position: absolute; inset: 0;
+        width: 100%; height: 100%;
+        pointer-events: none;
+        z-index: 10;
+    `;
+    // Canvas parent needs position:relative — grid-and-combo already has it typically
+    const parent = gridEl.parentElement;
+    if (parent) {
+        parent.style.position = 'relative';
+        parent.appendChild(_nrCanvas);
+    }
+    _nrCtx = _nrCanvas.getContext('2d');
+    _resizeNrCanvas();
+    window.addEventListener('resize', _resizeNrCanvas);
+}
+
+function _resizeNrCanvas() {
+    if (!_nrCanvas) return;
+    const parent = _nrCanvas.parentElement;
+    if (!parent) return;
+    const rect = parent.getBoundingClientRect();
+    _nrCanvas.width  = rect.width  * (window.devicePixelRatio || 1);
+    _nrCanvas.height = rect.height * (window.devicePixelRatio || 1);
+    _nrCanvas.style.width  = rect.width  + 'px';
+    _nrCanvas.style.height = rect.height + 'px';
+    if (_nrCtx) _nrCtx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+}
+
+/* Add a canvas animation. drawFn(ctx, progress 0→1, elapsed ms) returns false when done. */
+function nrCanvasAnim(drawFn, duration) {
+    nrCanvasInit();
+    const anim = { drawFn, duration, start: null };
+    _nrAnimations.push(anim);
+    if (!_nrRafId) _nrCanvasLoop();
+}
+
+function _nrCanvasLoop(now) {
+    if (!now) now = performance.now();
+    // FPS cap
+    if (_nrRafLast !== null && now - _nrRafLast < NR_CANVAS_FRAME) {
+        _nrRafId = requestAnimationFrame(_nrCanvasLoop);
+        return;
+    }
+    _nrRafLast = now;
+
+    if (!_nrCtx || !_nrCanvas) { _nrRafId = null; return; }
+    const w = _nrCanvas.width  / (window.devicePixelRatio || 1);
+    const h = _nrCanvas.height / (window.devicePixelRatio || 1);
+    _nrCtx.clearRect(0, 0, w, h);
+
+    _nrAnimations = _nrAnimations.filter(anim => {
+        if (!anim.start) anim.start = now;
+        const elapsed  = now - anim.start;
+        const progress = Math.min(elapsed / anim.duration, 1);
+        const keepGoing = anim.drawFn(_nrCtx, progress, elapsed, w, h);
+        return keepGoing && progress < 1;
+    });
+
+    if (_nrAnimations.length > 0) {
+        _nrRafId = requestAnimationFrame(_nrCanvasLoop);
+    } else {
+        _nrRafId = null;
+        _nrRafLast = null;
+    }
+}
+
+/* Helper: get a cell's center position in canvas-local coordinates */
+function nrCellCenter(r, c) {
+    const el = cellEl(r, c);
+    if (!el || !_nrCanvas) return null;
+    const cellRect   = el.getBoundingClientRect();
+    const canvasRect = _nrCanvas.getBoundingClientRect();
+    return {
+        x: cellRect.left + cellRect.width  / 2 - canvasRect.left,
+        y: cellRect.top  + cellRect.height / 2 - canvasRect.top,
+        w: cellRect.width,
+        h: cellRect.height
+    };
+}
+
 /* ── NR ability animation helpers ── */
 function nrFlashCell(r, c, cls, delay = 0) {
     const el = cellEl(r, c); if (!el) return;
@@ -2563,30 +2667,400 @@ function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
         case 'airstrike':
             if (target) nrFlashCell(target.r, target.c, 'nr-airstrike-target');
             break;
-        case 'detonation_wave':
+        case 'detonation_wave': {
+            // CSS flash
             nrFlashBoard((r, c) => {
                 const cell = S.grid[r][c];
                 return cell.owner !== -1 && cell.owner !== playerIdx && cell.count === critMass(r, c) - 1;
             }, 'nr-detwave-flash');
-            break;
-        case 'undertow':
-            for (let r2 = 0; r2 < cfg.rows; r2++)
-                for (let c2 = 0; c2 < cfg.cols; c2++) {
-                    const cell = S.grid[r2][c2];
-                    if (cell.owner !== -1 && cell.owner !== playerIdx && cell.count > 0) {
-                        const adjOwn = neighbors(r2, c2).some(([nr, nc]) => S.grid[nr][nc].owner === playerIdx);
-                        if (adjOwn) { nrFlashCell(r2, c2, 'nr-undertow-drain', (r2 + c2) * 20); }
+            // Canvas: expanding shockwave ring from each target cell
+            const dwTargets = [];
+            for (let r = 0; r < cfg.rows; r++)
+                for (let c = 0; c < cfg.cols; c++) {
+                    const cell = S.grid[r][c];
+                    if (cell.owner !== -1 && cell.owner !== playerIdx && cell.count === critMass(r, c) - 1) {
+                        const center = nrCellCenter(r, c);
+                        if (center) dwTargets.push(center);
                     }
                 }
+            const dwColor = PCOLORS[playerIdx];
+            nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                dwTargets.forEach(center => {
+                    const maxR = center.w * 1.1;
+                    const radius = maxR * progress;
+                    const alpha = Math.max(0, 1 - progress * 1.3);
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.strokeStyle = dwColor;
+                    ctx.lineWidth = 2.5 * (1 - progress * 0.7);
+                    ctx.beginPath();
+                    ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+                    ctx.stroke();
+                    // Inner ring slightly behind
+                    ctx.globalAlpha = alpha * 0.5;
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.arc(center.x, center.y, radius * 0.6, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.restore();
+                });
+                return progress < 1;
+            }, 500);
             break;
-        case 'tidal_wave':
-            if (target) nrFlashCol(target.c, 'nr-col-flash');
-            break;
-        case 'riptide':
+        }
+        case 'riptide': {
+            // CSS flash
             nrFlashBoard((r, c) => {
                 const er = r === 0 || r === cfg.rows - 1 || c === 0 || c === cfg.cols - 1;
                 return er && neighbors(r, c).some(([nr, nc]) => S.grid[nr][nc].owner === playerIdx);
             }, 'nr-riptide-flash');
+            // Canvas: 3 wave lines sweep inward from each of the 4 edges
+            const rtColor = PCOLORS[playerIdx];
+            nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                const waves = 3;
+                for (let w = 0; w < waves; w++) {
+                    const offset = (progress - w * 0.12) * 1.3;
+                    if (offset <= 0) continue;
+                    const alpha = Math.max(0, (1 - offset) * 0.7);
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.strokeStyle = rtColor;
+                    ctx.lineWidth = 1.8;
+                    // Top edge → inward
+                    const ty = H * offset * 0.5;
+                    ctx.beginPath(); ctx.moveTo(0, ty); ctx.lineTo(W, ty); ctx.stroke();
+                    // Bottom edge → inward
+                    const by = H - H * offset * 0.5;
+                    ctx.beginPath(); ctx.moveTo(0, by); ctx.lineTo(W, by); ctx.stroke();
+                    // Left edge → inward
+                    const lx = W * offset * 0.5;
+                    ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx, H); ctx.stroke();
+                    // Right edge → inward
+                    const rx = W - W * offset * 0.5;
+                    ctx.beginPath(); ctx.moveTo(rx, 0); ctx.lineTo(rx, H); ctx.stroke();
+                    ctx.restore();
+                }
+                return progress < 1;
+            }, 600);
+            break;
+        }
+        case 'blackout': {
+            if (target && target.targetPlayer !== undefined) nrFlashCard(target.targetPlayer, 'nr-blackout-hit');
+            // DOM darkness overlay
+            const gameEl = document.getElementById('game');
+            if (gameEl) {
+                const overlay = document.createElement('div');
+                overlay.className = 'nr-blackout-overlay';
+                gameEl.appendChild(overlay);
+                setTimeout(() => overlay.remove(), 700);
+            }
+            // Canvas: lightning bolt from activating player's card to target card
+            const srcCard = document.getElementById(`pc${playerIdx}`);
+            const dstCard = target && target.targetPlayer !== undefined
+                ? document.getElementById(`pc${target.targetPlayer}`) : null;
+            if (srcCard && dstCard && _nrCanvas) {
+                nrCanvasInit();
+                const canvasRect = _nrCanvas.getBoundingClientRect();
+                const sRect = srcCard.getBoundingClientRect();
+                const dRect = dstCard.getBoundingClientRect();
+                const sx = sRect.left + sRect.width / 2 - canvasRect.left;
+                const sy = sRect.top  + sRect.height / 2 - canvasRect.top;
+                const dx = dRect.left + dRect.width / 2 - canvasRect.left;
+                const dy = dRect.top  + dRect.height / 2 - canvasRect.top;
+                // Build jagged lightning path once
+                const segments = 8;
+                const pts = [{ x: sx, y: sy }];
+                for (let i = 1; i < segments; i++) {
+                    const t = i / segments;
+                    const mx = sx + (dx - sx) * t + (Math.random() - 0.5) * 40;
+                    const my = sy + (dy - sy) * t + (Math.random() - 0.5) * 40;
+                    pts.push({ x: mx, y: my });
+                }
+                pts.push({ x: dx, y: dy });
+                const bkColor = PCOLORS[playerIdx];
+                nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                    if (progress > 0.5) return false; // flash only at start
+                    const alpha = Math.max(0, 1 - progress * 2.5);
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.strokeStyle = bkColor;
+                    ctx.lineWidth = 2.5;
+                    ctx.shadowColor = bkColor;
+                    ctx.shadowBlur = 8;
+                    ctx.beginPath();
+                    ctx.moveTo(pts[0].x, pts[0].y);
+                    pts.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
+                    ctx.stroke();
+                    ctx.lineWidth = 1;
+                    ctx.strokeStyle = '#fff';
+                    ctx.globalAlpha = alpha * 0.6;
+                    ctx.beginPath();
+                    ctx.moveTo(pts[0].x, pts[0].y);
+                    pts.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
+                    ctx.stroke();
+                    ctx.restore();
+                    return true;
+                }, 400);
+            }
+            break;
+        }
+        case 'void_rift': {
+            // CSS flashes
+            if (target)
+                for (let dr = 0; dr <= 1; dr++)
+                    for (let dc = 0; dc <= 1; dc++) {
+                        const r2 = target.r + dr, c2 = target.c + dc;
+                        if (r2 < 0 || r2 >= cfg.rows || c2 < 0 || c2 >= cfg.cols) continue;
+                        const cls = S.grid[r2][c2].owner === playerIdx ? 'nr-voidrift-boost' : 'nr-voidrift-erase';
+                        nrFlashCell(r2, c2, cls, (dr + dc) * 40);
+                    }
+            // Canvas: particles spiral inward from surrounding area to 2×2 center
+            if (!target) break;
+            const vrCenterCell = nrCellCenter(target.r, target.c);
+            if (!vrCenterCell) break;
+            const vrCx = vrCenterCell.x + vrCenterCell.w / 2;
+            const vrCy = vrCenterCell.y + vrCenterCell.h / 2;
+            const vrColor = PCOLORS[playerIdx];
+            const vrParticles = [];
+            const pCount = 28;
+            for (let i = 0; i < pCount; i++) {
+                const angle = (i / pCount) * Math.PI * 2;
+                const dist  = 60 + Math.random() * 35;
+                vrParticles.push({
+                    startX: vrCx + Math.cos(angle) * dist,
+                    startY: vrCy + Math.sin(angle) * dist,
+                    angle,
+                    spinSpeed: 2.5 + Math.random() * 1.5,
+                    r: 2 + Math.random() * 1.5
+                });
+            }
+            nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                const t = elapsed / 1000;
+                vrParticles.forEach(p => {
+                    const inward = progress * progress; // ease-in
+                    const curAngle = p.angle + t * p.spinSpeed;
+                    const dist = (1 - inward) * 60;
+                    const x = vrCx + Math.cos(curAngle) * dist;
+                    const y = vrCy + Math.sin(curAngle) * dist;
+                    const alpha = Math.max(0, 1 - progress * 1.1);
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = vrColor;
+                    ctx.beginPath();
+                    ctx.arc(x, y, p.r * (1 - progress * 0.6), 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                });
+                return progress < 1;
+            }, 600);
+            break;
+        }
+        case 'absolute_zero': {
+            // CSS staggered freeze flashes
+            const azCr = cfg.rows / 2, azCc = cfg.cols / 2;
+            for (let r = 0; r < cfg.rows; r++)
+                for (let c = 0; c < cfg.cols; c++) {
+                    const cell = S.grid[r][c];
+                    if (cell.owner !== -1 && cell.owner !== playerIdx && cell.count >= critMass(r, c) - 1) {
+                        const dist = Math.abs(r - azCr) + Math.abs(c - azCc);
+                        nrFlashCell(r, c, 'nr-absz-flash', dist * 40);
+                    }
+                }
+            // Canvas: ice shards — 16 spike lines radiating from board center
+            const azColor = PCOLORS[playerIdx];
+            nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                const cx = W / 2, cy = H / 2;
+                const maxLen = Math.max(W, H) * 0.7 * progress;
+                const spikes = 16;
+                const alpha = Math.max(0, 1 - progress * 1.1);
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.strokeStyle = azColor;
+                for (let i = 0; i < spikes; i++) {
+                    const angle = (i / spikes) * Math.PI * 2;
+                    const len = maxLen * (0.7 + 0.3 * ((i % 2 === 0) ? 1 : 0.65));
+                    const ex = cx + Math.cos(angle) * len;
+                    const ey = cy + Math.sin(angle) * len;
+                    ctx.lineWidth = (i % 2 === 0 ? 2 : 1) * (1 - progress * 0.6);
+                    ctx.beginPath();
+                    ctx.moveTo(cx, cy);
+                    ctx.lineTo(ex, ey);
+                    ctx.stroke();
+                    // Small perpendicular cross-bar at 60% length
+                    if (i % 2 === 0) {
+                        const mx = cx + Math.cos(angle) * len * 0.6;
+                        const my = cy + Math.sin(angle) * len * 0.6;
+                        const blen = len * 0.12;
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(mx - Math.sin(angle) * blen, my + Math.cos(angle) * blen);
+                        ctx.lineTo(mx + Math.sin(angle) * blen, my - Math.cos(angle) * blen);
+                        ctx.stroke();
+                    }
+                }
+                // Central burst circle
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(cx, cy, Math.max(W, H) * 0.06 * (1 + progress), 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+                return progress < 1;
+            }, 700);
+            break;
+        }
+        case 'encircle': {
+            // CSS flash for qualifying cells
+            nrFlashBoard((r, c) => {
+                const cell = S.grid[r][c];
+                if (cell.owner === -1 || cell.owner === playerIdx) return false;
+                return neighbors(r, c).filter(([nr, nc]) => S.grid[nr][nc].owner === playerIdx).length >= 2;
+            }, 'nr-encircle-hit');
+            // Canvas: closing fire ring around each qualifying enemy cell
+            const encTargets = [];
+            for (let r = 0; r < cfg.rows; r++)
+                for (let c = 0; c < cfg.cols; c++) {
+                    const cell = S.grid[r][c];
+                    if (cell.owner === -1 || cell.owner === playerIdx) continue;
+                    const n = neighbors(r, c).filter(([nr, nc]) => S.grid[nr][nc].owner === playerIdx).length;
+                    if (n >= 2) {
+                        const center = nrCellCenter(r, c);
+                        if (center) encTargets.push(center);
+                    }
+                }
+            const encColor = PCOLORS[playerIdx];
+            nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                encTargets.forEach(center => {
+                    // Ring starts large, closes inward
+                    const startR = center.w * 1.4;
+                    const endR   = center.w * 0.3;
+                    const radius = startR - (startR - endR) * progress;
+                    const alpha  = progress < 0.8 ? 1 : Math.max(0, 1 - (progress - 0.8) * 5);
+                    // Draw arc sweep completing as ring closes
+                    const sweep  = Math.min(progress * 1.4, 1) * Math.PI * 2;
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.strokeStyle = encColor;
+                    ctx.lineWidth = 2.5 - progress * 1.5;
+                    ctx.beginPath();
+                    ctx.arc(center.x, center.y, radius, -Math.PI / 2, -Math.PI / 2 + sweep);
+                    ctx.stroke();
+                    // Ember sparks at arc tip
+                    const tipAngle = -Math.PI / 2 + sweep;
+                    const tx = center.x + Math.cos(tipAngle) * radius;
+                    const ty = center.y + Math.sin(tipAngle) * radius;
+                    ctx.fillStyle = encColor;
+                    ctx.globalAlpha = alpha * 0.9;
+                    ctx.beginPath();
+                    ctx.arc(tx, ty, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                });
+                return progress < 1;
+            }, 650);
+            break;
+        }
+        case 'undertow': {
+            // Collect drain pairs BEFORE state mutation
+            const drainPairs = [];
+            for (let r2 = 0; r2 < cfg.rows; r2++)
+                for (let c2 = 0; c2 < cfg.cols; c2++) {
+                    const cell = S.grid[r2][c2];
+                    if (cell.owner !== -1 && cell.owner !== playerIdx && cell.count > 0) {
+                        const adjOwn = neighbors(r2, c2).filter(([nr, nc]) => S.grid[nr][nc].owner === playerIdx);
+                        if (!adjOwn.length) continue;
+                        adjOwn.sort((a, b) => S.grid[a[0]][a[1]].count - S.grid[b[0]][b[1]].count);
+                        drainPairs.push({ from: [r2, c2], to: adjOwn[0] });
+                    }
+                }
+            // Flash cells
+            drainPairs.forEach(({ from: [r2, c2], to: [tr, tc] }) => {
+                nrFlashCell(r2, c2, 'nr-undertow-drain', (r2 + c2) * 20);
+            });
+            // Canvas arcs — bezier curve with travelling dot from each enemy to its target
+            const color = PCOLORS[playerIdx];
+            nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                drainPairs.forEach(({ from: [fr, fc], to: [tr, tc] }) => {
+                    const src = nrCellCenter(fr, fc);
+                    const dst = nrCellCenter(tr, tc);
+                    if (!src || !dst) return;
+                    // Control point arcs inward toward board centre
+                    const cx = (src.x + dst.x) / 2 + (dst.y - src.y) * 0.35;
+                    const cy = (src.y + dst.y) / 2 - (dst.x - src.x) * 0.35;
+                    // Draw arc trail (fades as progress advances)
+                    const trailAlpha = Math.max(0, 0.45 - progress * 0.45);
+                    ctx.save();
+                    ctx.strokeStyle = color.replace(')', `, ${trailAlpha})`).replace('rgb', 'rgba').replace('#', 'rgba(').replace('rgba(', 'rgba(');
+                    // simpler: use globalAlpha
+                    ctx.globalAlpha = trailAlpha;
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 1.5;
+                    ctx.setLineDash([4, 4]);
+                    ctx.beginPath();
+                    ctx.moveTo(src.x, src.y);
+                    ctx.quadraticCurveTo(cx, cy, dst.x, dst.y);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    // Travelling dot along the bezier
+                    const t = Math.min(progress * 1.4, 1);
+                    const bx = (1-t)*(1-t)*src.x + 2*(1-t)*t*cx + t*t*dst.x;
+                    const by = (1-t)*(1-t)*src.y + 2*(1-t)*t*cy + t*t*dst.y;
+                    ctx.globalAlpha = Math.max(0, 1 - progress * 1.1);
+                    ctx.fillStyle = color;
+                    ctx.beginPath();
+                    ctx.arc(bx, by, 3.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                });
+                return progress < 1;
+            }, 520);
+            break;
+        }
+        case 'pandemic': {
+            // Wave radiates outward from each Blight cell
+            const ownCells = [];
+            for (let r = 0; r < cfg.rows; r++)
+                for (let c = 0; c < cfg.cols; c++)
+                    if (S.grid[r][c].owner === playerIdx) ownCells.push([r, c]);
+            // CSS staggered flash
+            for (let r = 0; r < cfg.rows; r++)
+                for (let c = 0; c < cfg.cols; c++) {
+                    if (S.grid[r][c].owner === -1 || S.grid[r][c].owner === playerIdx) continue;
+                    const minDist = ownCells.reduce((m, [or, oc]) => Math.min(m, Math.abs(r - or) + Math.abs(c - oc)), 999);
+                    nrFlashCell(r, c, 'nr-pandemic-drain', minDist * 45);
+                }
+            // Canvas particles: burst of 7 dots from each own cell outward
+            const pColor = PCOLORS[playerIdx];
+            const particles = [];
+            ownCells.forEach(([r, c]) => {
+                const center = nrCellCenter(r, c);
+                if (!center) return;
+                const count = 7;
+                for (let i = 0; i < count; i++) {
+                    const angle = (i / count) * Math.PI * 2;
+                    const speed = 38 + Math.random() * 28;
+                    particles.push({ x: center.x, y: center.y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, r: 2.5 + Math.random() });
+                }
+            });
+            nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                const t = elapsed / 1000;
+                particles.forEach(p => {
+                    const x = p.x + p.vx * t;
+                    const y = p.y + p.vy * t;
+                    const alpha = Math.max(0, 1 - progress * 1.2);
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = pColor;
+                    ctx.beginPath();
+                    ctx.arc(x, y, p.r * (1 - progress * 0.5), 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                });
+                return progress < 1;
+            }, 700);
+            break;
+        }
+        case 'tidal_wave':
+            if (target) nrFlashCol(target.c, 'nr-col-flash');
             break;
         case 'overgrowth':
             if (target)
@@ -2594,40 +3068,10 @@ function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
                     for (let dc = -1; dc <= 1; dc++)
                         nrFlashCell(target.r + dr, target.c + dc, 'nr-overgrowth-bloom', (Math.abs(dr) + Math.abs(dc)) * 25);
             break;
-        case 'pandemic': {
-            // Wave radiates outward from each Blight cell — stagger by distance from nearest own cell
-            const ownCells = [];
-            for (let r = 0; r < cfg.rows; r++)
-                for (let c = 0; c < cfg.cols; c++)
-                    if (S.grid[r][c].owner === playerIdx) ownCells.push([r, c]);
-            for (let r = 0; r < cfg.rows; r++)
-                for (let c = 0; c < cfg.cols; c++) {
-                    if (S.grid[r][c].owner === -1 || S.grid[r][c].owner === playerIdx) continue;
-                    const minDist = ownCells.reduce((m, [or, oc]) => Math.min(m, Math.abs(r - or) + Math.abs(c - oc)), 999);
-                    nrFlashCell(r, c, 'nr-pandemic-drain', minDist * 45);
-                }
-            break;
-        }
-        case 'surge':
-            nrFlashCard(playerIdx, 'nr-surge-activate');
-            break;
         case 'static_field':
             nrFlashBoard((r, c) => S.grid[r][c].owner === playerIdx, 'nr-staticfield-shield');
             break;
-        case 'blackout': {
-            if (target && target.targetPlayer !== undefined) nrFlashCard(target.targetPlayer, 'nr-blackout-hit');
-            // Darkness overlay that sweeps across the grid
-            const gridEl = document.getElementById('game');
-            if (gridEl) {
-                const overlay = document.createElement('div');
-                overlay.className = 'nr-blackout-overlay';
-                gridEl.appendChild(overlay);
-                setTimeout(() => overlay.remove(), 700);
-            }
-            break;
-        }
         case 'phantom_step': {
-            // Ghost orb slides from source to destination
             if (secondTarget && target) {
                 const srcEl = cellEl(secondTarget.r, secondTarget.c);
                 const dstEl = cellEl(target.r, target.c);
@@ -2638,24 +3082,11 @@ function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
                     const dstRect = dstEl.getBoundingClientRect();
                     const ghost = document.createElement('div');
                     ghost.className = 'nr-phantom-ghost';
-                    ghost.style.cssText = `
-                        position: fixed;
-                        left: ${srcRect.left + srcRect.width / 2}px;
-                        top: ${srcRect.top + srcRect.height / 2}px;
-                        width: ${srcRect.width * 0.45}px;
-                        height: ${srcRect.width * 0.45}px;
-                        background: ${PCOLORS[playerIdx]}55;
-                        border: 1.5px solid ${PCOLORS[playerIdx]};
-                        border-radius: 50%;
-                        pointer-events: none;
-                        z-index: 999;
-                        transform: translate(-50%, -50%);
-                        transition: left 280ms ease-in-out, top 280ms ease-in-out, opacity 280ms;
-                    `;
+                    ghost.style.cssText = `position:fixed;left:${srcRect.left+srcRect.width/2}px;top:${srcRect.top+srcRect.height/2}px;width:${srcRect.width*0.45}px;height:${srcRect.width*0.45}px;background:${PCOLORS[playerIdx]}55;border:1.5px solid ${PCOLORS[playerIdx]};border-radius:50%;pointer-events:none;z-index:999;transform:translate(-50%,-50%);transition:left 280ms ease-in-out,top 280ms ease-in-out,opacity 280ms;`;
                     document.body.appendChild(ghost);
                     requestAnimationFrame(() => requestAnimationFrame(() => {
-                        ghost.style.left = `${dstRect.left + dstRect.width / 2}px`;
-                        ghost.style.top  = `${dstRect.top  + dstRect.height / 2}px`;
+                        ghost.style.left = `${dstRect.left+dstRect.width/2}px`;
+                        ghost.style.top  = `${dstRect.top+dstRect.height/2}px`;
                         ghost.style.opacity = '0';
                     }));
                     setTimeout(() => ghost.remove(), 400);
@@ -2667,17 +3098,6 @@ function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
             if (secondTarget) nrFlashCell(secondTarget.r, secondTarget.c, 'nr-swap-flash');
             if (target)       nrFlashCell(target.r, target.c, 'nr-swap-flash');
             break;
-        case 'void_rift':
-            // 2×2 from top-left anchor
-            if (target)
-                for (let dr = 0; dr <= 1; dr++)
-                    for (let dc = 0; dc <= 1; dc++) {
-                        const r2 = target.r + dr, c2 = target.c + dc;
-                        if (r2 < 0 || r2 >= cfg.rows || c2 < 0 || c2 >= cfg.cols) continue;
-                        const cls = S.grid[r2][c2].owner === playerIdx ? 'nr-voidrift-boost' : 'nr-voidrift-erase';
-                        nrFlashCell(r2, c2, cls, (dr + dc) * 40);
-                    }
-            break;
         case 'permafrost':
             if (target) {
                 nrFlashCell(target.r, target.c, 'nr-permafrost-hit');
@@ -2687,19 +3107,6 @@ function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
         case 'ice_wall':
             nrFlashBoard((r, c) => S.grid[r][c].owner === playerIdx, 'nr-icewall-shimmer');
             break;
-        case 'absolute_zero': {
-            // Freeze pulse radiates from grid center outward
-            const cr = cfg.rows / 2, cc = cfg.cols / 2;
-            for (let r = 0; r < cfg.rows; r++)
-                for (let c = 0; c < cfg.cols; c++) {
-                    const cell = S.grid[r][c];
-                    if (cell.owner !== -1 && cell.owner !== playerIdx && cell.count >= critMass(r, c) - 1) {
-                        const dist = Math.abs(r - cr) + Math.abs(c - cc);
-                        nrFlashCell(r, c, 'nr-absz-flash', dist * 40);
-                    }
-                }
-            break;
-        }
         case 'ignite':
             if (target) nrFlashCell(target.r, target.c, 'nr-ignite-mark');
             break;
@@ -2709,19 +3116,66 @@ function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
                     for (let dc = 0; dc <= 1; dc++)
                         nrFlashCell(target.r + dr, target.c + dc, 'nr-ember-mark', (dr + dc) * 60);
             break;
-        case 'encircle':
-            nrFlashBoard((r, c) => {
-                const cell = S.grid[r][c];
-                if (cell.owner === -1 || cell.owner === playerIdx) return false;
-                return neighbors(r, c).filter(([nr, nc]) => S.grid[nr][nc].owner === playerIdx).length >= 2;
-            }, 'nr-encircle-hit');
-            break;
-        case 'corrode':
+        case 'corrode': {
+            // CSS flash on the 2×2 area
             if (target)
                 for (let dr = 0; dr <= 1; dr++)
                     for (let dc = 0; dc <= 1; dc++)
                         nrFlashCell(target.r + dr, target.c + dc, 'nr-corrode-hit', (dr + dc) * 40);
+            // Canvas drip: 3 droplets fall downward from each enemy cell in the 2×2
+            const cColor = PCOLORS[playerIdx];
+            const drips = [];
+            if (target) {
+                for (let dr = 0; dr <= 1; dr++) {
+                    for (let dc = 0; dc <= 1; dc++) {
+                        const r2 = target.r + dr, c2 = target.c + dc;
+                        if (r2 >= cfg.rows || c2 >= cfg.cols) continue;
+                        const cell = S.grid[r2][c2];
+                        if (cell.owner === -1 || cell.owner === playerIdx) continue;
+                        const center = nrCellCenter(r2, c2);
+                        if (!center) continue;
+                        const count = 3;
+                        for (let i = 0; i < count; i++) {
+                            drips.push({
+                                x: center.x + (Math.random() - 0.5) * center.w * 0.5,
+                                y: center.y,
+                                speed: 45 + Math.random() * 35,
+                                r: 2 + Math.random() * 1.5,
+                                delay: i * 0.08 + dr * 0.06 + dc * 0.06
+                            });
+                        }
+                    }
+                }
+            }
+            nrCanvasAnim((ctx, progress, elapsed, W, H) => {
+                const t = elapsed / 1000;
+                drips.forEach(d => {
+                    const localT = Math.max(0, t - d.delay);
+                    if (localT <= 0) return;
+                    const localP = Math.min(localT / 0.55, 1);
+                    const y = d.y + d.speed * localT + 60 * localT * localT; // gravity
+                    const alpha = Math.max(0, 1 - localP * 1.1);
+                    const radius = d.r * (1 + localP * 0.4);
+                    ctx.save();
+                    ctx.globalAlpha = alpha;
+                    ctx.fillStyle = cColor;
+                    // Teardrop shape: circle with a point at top
+                    ctx.beginPath();
+                    ctx.arc(d.x, y, radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Elongated tail
+                    ctx.beginPath();
+                    ctx.moveTo(d.x - radius * 0.5, y - radius);
+                    ctx.lineTo(d.x + radius * 0.5, y - radius);
+                    ctx.lineTo(d.x, y - radius * 3.5);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.restore();
+                });
+                return progress < 1;
+            }, 650);
             break;
+        }
         case 'infect':
             if (target) nrFlashCell(target.r, target.c, 'nr-infect-mark-flash');
             break;
@@ -3501,6 +3955,7 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
                     if (cell.owner !== -1 && cell.owner !== playerIdx && cell.count >= critMass(r2, c2) - 1) {
                         cell.frozen = 3;
                         cell._cryoFrozen = true;
+                        cell._absZeroFrozen = true;
                         cell.frozenBy = playerIdx;
                         markDirty(r2, c2);
                     }
@@ -3937,6 +4392,7 @@ async function chainReact(session) {
             // _cryoFrozen: when this cell explodes, leave 1 orb for spreadOwner instead of emptying
             const leaveCryo = nuclearMode && cell._cryoFrozen;
             cell._cryoFrozen = false;
+            cell._absZeroFrozen = false;
             cell.frozen = 0;
             cell.frozenBy = -1;
             cell.count -= cm; S.orbCount[owner] -= cm;
@@ -3957,6 +4413,7 @@ async function chainReact(session) {
                         // knows to leave 1 orb behind when this cell detonates
                         ncell.frozen = 0;
                         ncell.frozenBy = -1;
+                        ncell._absZeroFrozen = false;
                     } else {
                         return; // all other frozen cells still block
                     }
@@ -4379,6 +4836,10 @@ function goSetup() {
         surgeLabel.classList.remove('nr-surge-visible');
         surgeLabel.textContent = '';
     }
+    // Cancel any running canvas animations
+    if (_nrRafId) { cancelAnimationFrame(_nrRafId); _nrRafId = null; }
+    _nrAnimations = [];
+    if (_nrCtx && _nrCanvas) _nrCtx.clearRect(0, 0, _nrCanvas.width, _nrCanvas.height);
     nuclearMode = false;
     const nmToggle = document.getElementById('nuclear-mode-toggle');
     if (nmToggle) nmToggle.classList.remove('on');
