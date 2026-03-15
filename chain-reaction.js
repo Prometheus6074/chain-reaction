@@ -65,7 +65,7 @@ let nuclearMode = false;
 let _nrTargeting = null; // { player, abilityId, phase, firstCell }
 
 const NR_METER_MAX    = 100;
-const NR_METER_PER_COMBO = 10; // added per combo step — 4-chain fills meter
+const NR_METER_PER_COMBO = 4; // reduced for balance — underdog multiplier and flat bonus compensate
 
 /* Characters indexed by ALL_COLORS position (0=Red … 7=Lime) */
 const NR_CHARS = [
@@ -75,7 +75,7 @@ const NR_CHARS = [
     { name: 'Voltage', abilities: ['surge',        'static_field', 'blackout']        },
     { name: 'Phantom', abilities: ['phantom_step', 'swap',         'void_rift']       },
     { name: 'Cryo',    abilities: ['permafrost',   'ice_wall',     'absolute_zero']   },
-    { name: 'Napalm',  abilities: ['ignite',       'backdraft',    'firestorm']       },
+    { name: 'Napalm',  abilities: ['ignite',       'ember',        'encircle']        },
     { name: 'Venom',   abilities: ['corrode',      'infect',       'decay']           },
 ];
 
@@ -88,7 +88,7 @@ const NR_ABILITIES = {
     riptide:         { name: 'Riptide',         targeting: 'none'       },
     tidal_wave:      { name: 'Tidal Wave',      targeting: 'col'        },
     creep:           { name: 'Creep',           targeting: 'none'       },
-    overgrowth:      { name: 'Overgrowth',      targeting: 'cell_own'   },
+    overgrowth:      { name: 'Overgrowth',      targeting: 'cell_any'   },
     pandemic:        { name: 'Pandemic',        targeting: 'none'       },
     surge:           { name: 'Surge',           targeting: 'none'       },
     static_field:    { name: 'Static Field',    targeting: 'none'       },
@@ -99,10 +99,10 @@ const NR_ABILITIES = {
     permafrost:      { name: 'Permafrost',      targeting: 'cell_enemy' },
     ice_wall:        { name: 'Ice Wall',        targeting: 'none'       },
     absolute_zero:   { name: 'Absolute Zero',   targeting: 'none'       },
-    ignite:          { name: 'Ignite',          targeting: 'cell_own'   },
-    backdraft:       { name: 'Backdraft',       targeting: 'cell_enemy' },
-    firestorm:       { name: 'Firestorm',       targeting: 'none'       }, // chain hook — phase 2
-    corrode:         { name: 'Corrode',         targeting: 'cell_enemy' },
+    ignite:          { name: 'Ignite',          targeting: 'cell_any'   },
+    ember:           { name: 'Ember',           targeting: 'cell_any'   }, // top-left anchor of 2×2 — marks own cells within area
+    encircle:        { name: 'Encircle',        targeting: 'none'       },
+    corrode:         { name: 'Corrode',         targeting: 'cell_any'   }, // 2×2 area top-left anchor
     infect:          { name: 'Infect',          targeting: 'cell_enemy' },
     decay:           { name: 'Decay',           targeting: 'cell_enemy' },
 };
@@ -132,7 +132,7 @@ let onlineNumPlayers = 2;
 let onlineRoomPassword = '';
 let myUsername = sessionStorage.getItem('cr_username') || localStorage.getItem('cr_username') || '';
 let _onlineTurnTimerInterval = null;
-let _pendingStateSnap = null;     // state-only update queued while animating
+let _nrRoundStartOrbs = []; // snapshot of orbCounts at the start of each round for underdog check
 const TURN_TIMER_MS = 30000; // 30 seconds per turn
 
 /* ── Firebase init (lazy) ── */
@@ -632,6 +632,25 @@ function updateWaitingRoomUI(room) {
         timedBadge.style.display = 'none';
     }
 
+    // Show nuclear mode badge
+    let nrWaitBadge = document.getElementById('ol-nuclear-badge');
+    if (room.config.nuclearMode) {
+        if (!nrWaitBadge) {
+            nrWaitBadge = document.createElement('div');
+            nrWaitBadge.id = 'ol-nuclear-badge';
+            nrWaitBadge.className = 'ol-timed-badge';
+            nrWaitBadge.style.color = '#cc44ff';
+            nrWaitBadge.style.borderColor = 'rgba(204,68,255,0.35)';
+            nrWaitBadge.style.background = 'rgba(204,68,255,0.08)';
+            const anchor = document.getElementById('ol-timed-badge') || document.getElementById('ol-status');
+            anchor.insertAdjacentElement('afterend', nrWaitBadge);
+        }
+        nrWaitBadge.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="5" x2="12" y2="5.01"/><line x1="12" y1="19" x2="12" y2="19.01"/><line x1="5" y1="5" x2="5" y2="5.01"/><line x1="19" y1="5" x2="19" y2="5.01"/><line x1="5" y1="19" x2="5" y2="19.01"/><line x1="19" y1="19" x2="19" y2="19.01"/></svg> Nuclear Reaction Mode`;
+        nrWaitBadge.style.display = '';
+    } else if (nrWaitBadge) {
+        nrWaitBadge.style.display = 'none';
+    }
+
     if (isHost) {
         const btn = document.getElementById('ol-start-btn');
         btn.disabled = numJoined < 2;
@@ -771,6 +790,7 @@ function handlePlayerDisconnect(playerIndex) {
     S.orbCount[playerIndex] = 0;
     S.eliminated[playerIndex] = true;
     S.hasMoved[playerIndex] = true; // so elimination check works
+    if (nuclearMode && S.nrMeter && S.nrMeter[playerIndex] > 0) nrDistributeMeter(playerIndex);
 
     // Check win condition
     const survivors = S.eliminated.map((e, i) => !e ? i : -1).filter(i => i >= 0);
@@ -1407,7 +1427,7 @@ function serializeState(state) {
             o: cell.owner, c: cell.count,
             fr: cell.frozen || 0, inf: cell.infect ?? -1,
             bdr: cell.backdraft ?? -1, ign: cell.ignite || 0,
-            cry: cell._cryoFrozen ? 1 : 0, fby: cell.frozenBy ?? -1
+            cry: cell._cryoFrozen ? 1 : 0, fby: cell.frozenBy ?? -1, igo: cell.igniteOwner ?? -1
             // _airstrikeOwner is intentionally excluded — transient, never persisted
         }))),
         current: state.current,
@@ -1426,6 +1446,7 @@ function serializeState(state) {
         nrSurge:      nuclearMode ? [...(state.nrSurge      || [])] : null,
         nrIceWall:    nuclearMode ? [...(state.nrIceWall    || [])] : null,
         nrFirestorm:  nuclearMode ? [...(state.nrFirestorm  || [])] : null,
+        nrStaticField:nuclearMode ? [...(state.nrStaticField|| [])] : null,
         ts: firebase.database.ServerValue.TIMESTAMP
     };
 }
@@ -1445,7 +1466,7 @@ function deserializeState(data) {
                 owner: cell.o, count: cell.c,
                 frozen: cell.fr || 0, infect: cell.inf ?? -1,
                 backdraft: cell.bdr ?? -1, ignite: cell.ign || 0,
-                _cryoFrozen: !!(cell.cry), frozenBy: cell.fby ?? -1
+                _cryoFrozen: !!(cell.cry), frozenBy: cell.fby ?? -1, igniteOwner: cell.igo ?? -1
             }))),
         current: data.current,
         orbCount: toArr(data.orbCount),
@@ -1459,9 +1480,10 @@ function deserializeState(data) {
         nrMeter:      data.nrMeter      ? toArr(data.nrMeter)      : new Array(np).fill(0),
         nrAbilityIdx: data.nrAbilityIdx ? toArr(data.nrAbilityIdx) : new Array(np).fill(0),
         nrBlackout:   data.nrBlackout   ? toArr(data.nrBlackout)   : new Array(np).fill(false),
-        nrSurge:      data.nrSurge      ? toArr(data.nrSurge)      : new Array(np).fill(false),
+        nrSurge:      data.nrSurge      ? toArr(data.nrSurge)      : new Array(np).fill(0),
         nrIceWall:    data.nrIceWall    ? toArr(data.nrIceWall)    : new Array(np).fill(false),
         nrFirestorm:  data.nrFirestorm  ? toArr(data.nrFirestorm)  : new Array(np).fill(false),
+        nrStaticField:data.nrStaticField? toArr(data.nrStaticField): new Array(np).fill(false),
     };
     return s;
 }
@@ -1499,13 +1521,14 @@ function initState() {
     gameSession++;
     window._orbAnimEpoch = Date.now();
     playerTimers = timedMode ? new Array(PCOLORS.length).fill(timedSeconds * 1000) : [];
+    _nrRoundStartOrbs = new Array(PCOLORS.length).fill(0); // all equal at start — no underdog buff round 1
     const np = PCOLORS.length;
     S = {
         grid: Array.from({ length: cfg.rows }, () =>
             Array.from({ length: cfg.cols }, () => ({
                 owner: -1, count: 0,
                 // NR per-cell fields (always present, ignored when !nuclearMode)
-                frozen: 0, infect: -1, backdraft: -1, ignite: 0, _cryoFrozen: false, frozenBy: -1
+                frozen: 0, infect: -1, backdraft: -1, ignite: 0, _cryoFrozen: false, frozenBy: -1, igniteOwner: -1
             }))),
         current: 0,
         orbCount: new Array(np).fill(0),
@@ -1519,9 +1542,12 @@ function initState() {
         nrMeter:       new Array(np).fill(0),
         nrAbilityIdx:  new Array(np).fill(0),
         nrBlackout:    new Array(np).fill(false),
-        nrSurge:       new Array(np).fill(false),
+        nrSurge:       new Array(np).fill(0),
         nrIceWall:     new Array(np).fill(false),
         nrFirestorm:   new Array(np).fill(false),
+        nrStaticField: new Array(np).fill(false),
+        _nrSurgeFreeThisTurn: false,
+        _nrSurgeUsedThisTurn: 0,
     };
 }
 
@@ -1531,7 +1557,7 @@ function cloneState() {
             owner: cell.owner, count: cell.count,
             frozen: cell.frozen || 0, infect: cell.infect ?? -1,
             backdraft: cell.backdraft ?? -1, ignite: cell.ignite || 0,
-            _cryoFrozen: !!cell._cryoFrozen, frozenBy: cell.frozenBy ?? -1
+            _cryoFrozen: !!cell._cryoFrozen, frozenBy: cell.frozenBy ?? -1, igniteOwner: cell.igniteOwner ?? -1
         }))),
         current: S.current,
         orbCount: [...S.orbCount],
@@ -1547,6 +1573,9 @@ function cloneState() {
         nrSurge:      [...(S.nrSurge      || [])],
         nrIceWall:    [...(S.nrIceWall    || [])],
         nrFirestorm:  [...(S.nrFirestorm  || [])],
+        nrStaticField:[...(S.nrStaticField|| [])],
+        _nrSurgeFreeThisTurn: false, // never carry free-turn across undo
+        _nrSurgeUsedThisTurn: 0,
     };
 }
 
@@ -1748,6 +1777,33 @@ function renderCell(r, c) {
     if (data.count <= 0) return;
     const cm = critMass(r, c);
     const surviving = data.count >= cm ? data.count - cm : data.count;
+    // NR cell status indicators — rendered BEFORE surviving check so they show on critMass cells too
+    if (nuclearMode) {
+        el.classList.toggle('nr-frozen', !!(data.frozen > 0));
+
+        let frzBadge = el.querySelector('.nr-badge-frozen');
+        if (data.frozen > 0) {
+            if (!frzBadge) { frzBadge = document.createElement('div'); frzBadge.className = 'nr-badge nr-badge-frozen'; el.appendChild(frzBadge); }
+            frzBadge.textContent = `FRZ${data.frozen > 1 ? '×' + data.frozen : ''}`;
+        } else if (frzBadge) { frzBadge.remove(); }
+
+        let infectBadge = el.querySelector('.nr-badge-infect');
+        if (data.infect >= 0) {
+            if (!infectBadge) { infectBadge = document.createElement('div'); infectBadge.className = 'nr-badge nr-badge-infect'; infectBadge.textContent = 'NFCT'; el.appendChild(infectBadge); }
+        } else if (infectBadge) { infectBadge.remove(); }
+
+        let embrBadge = el.querySelector('.nr-badge-ember');
+        if (data.backdraft >= 0 && data.backdraft === data.owner) {
+            if (!embrBadge) { embrBadge = document.createElement('div'); embrBadge.className = 'nr-badge nr-badge-ember'; embrBadge.textContent = 'EMBR'; el.appendChild(embrBadge); }
+        } else if (embrBadge) { embrBadge.remove(); }
+
+        let ignBadge = el.querySelector('.nr-badge-ignite');
+        if (data.ignite > 0) {
+            if (!ignBadge) { ignBadge = document.createElement('div'); ignBadge.className = 'nr-badge nr-badge-ignite'; el.appendChild(ignBadge); }
+            ignBadge.textContent = `IGN×${data.ignite}`;
+        } else if (ignBadge) { ignBadge.remove(); }
+    }
+
     if (surviving <= 0) return;
     const col = PCOLORS[data.owner];
     const cellSz = _renderCellSz || el.offsetWidth || 40;
@@ -1787,25 +1843,6 @@ function renderCell(r, c) {
         el.style.setProperty('--cell-glow-color', col);
     }
 
-    // NR cell status indicators
-    if (nuclearMode) {
-        el.classList.toggle('nr-frozen', !!(data.frozen > 0));
-        // Infect dot
-        let infectDot = el.querySelector('.nr-infect-dot');
-        if (data.infect >= 0) {
-            if (!infectDot) { infectDot = document.createElement('div'); infectDot.className = 'nr-infect-dot'; el.appendChild(infectDot); }
-        } else if (infectDot) { infectDot.remove(); }
-        // Backdraft dot
-        let bdrDot = el.querySelector('.nr-backdraft-dot');
-        if (data.backdraft >= 0) {
-            if (!bdrDot) { bdrDot = document.createElement('div'); bdrDot.className = 'nr-backdraft-dot'; el.appendChild(bdrDot); }
-        } else if (bdrDot) { bdrDot.remove(); }
-        // Ignite dot
-        let ignDot = el.querySelector('.nr-ignite-dot');
-        if (data.ignite > 0) {
-            if (!ignDot) { ignDot = document.createElement('div'); ignDot.className = 'nr-ignite-dot'; el.appendChild(ignDot); }
-        } else if (ignDot) { ignDot.remove(); }
-    }
 }
 function renderStrip() {
     // Find max orbs among alive players
@@ -1850,6 +1887,21 @@ function renderStrip() {
                 const abilId  = NR_CHARS[charIdx].abilities[abilIdx];
                 abilName.textContent = NR_ABILITIES[abilId].name;
             }
+            // Surge active indicator
+            let surgeIndicator = card.querySelector('.nr-surge-indicator');
+            const surgeActive = S.nrSurge && S.nrSurge[i] > 0;
+            if (surgeActive) {
+                if (!surgeIndicator) {
+                    surgeIndicator = document.createElement('div');
+                    surgeIndicator.className = 'nr-surge-indicator';
+                    card.appendChild(surgeIndicator);
+                }
+                surgeIndicator.textContent = `Surge ×${S.nrSurge[i]}`;
+                surgeIndicator.style.color = PCOLORS[i];
+                surgeIndicator.style.display = '';
+            } else if (surgeIndicator) {
+                surgeIndicator.style.display = 'none';
+            }
         }
     }
 }
@@ -1884,6 +1936,21 @@ function renderBanner() {
         tmBadge.style.display = '';
     } else if (tmBadge) {
         tmBadge.style.display = 'none';
+    }
+    // Nuclear Mode badge
+    let nrBadge = document.getElementById('ingame-nr-badge');
+    if (nuclearMode) {
+        if (!nrBadge) {
+            nrBadge = document.createElement('div');
+            nrBadge.id = 'ingame-nr-badge';
+            nrBadge.className = 'ingame-timed-badge ingame-nr-badge';
+            const anchor = document.getElementById('ingame-timed-badge') || b;
+            anchor.insertAdjacentElement('afterend', nrBadge);
+        }
+        nrBadge.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="12" y1="5" x2="12" y2="5.01"/><line x1="12" y1="19" x2="12" y2="19.01"/><line x1="5" y1="5" x2="5" y2="5.01"/><line x1="19" y1="5" x2="19" y2="5.01"/><line x1="5" y1="19" x2="5" y2="19.01"/><line x1="19" y1="19" x2="19" y2="19.01"/></svg> Nuclear Reaction Mode`;
+        nrBadge.style.display = '';
+    } else if (nrBadge) {
+        nrBadge.style.display = 'none';
     }
 }
 function syncUndoBtn() {
@@ -2110,6 +2177,7 @@ function eliminateTimedOutPlayer(playerIndex) {
         S.orbCount[playerIndex] = 0;
         S.eliminated[playerIndex] = true;
         S.hasMoved[playerIndex] = true;
+        if (nuclearMode && S.nrMeter && S.nrMeter[playerIndex] > 0) nrDistributeMeter(playerIndex);
 
         const survivors = S.eliminated.map((e, i) => !e ? i : -1).filter(i => i >= 0);
         if (survivors.length === 1) {
@@ -2284,11 +2352,7 @@ async function handleClick(r, c) {
     S.orbCount[S.current]++;
     S.hasMoved[S.current] = true;
 
-    // Surge: treat placed cell as already at critical mass
-    const surgeActive = nuclearMode && S.nrSurge && S.nrSurge[S.current];
-    if (surgeActive) { S.nrSurge[S.current] = false; }
-
-    const willExplodeImmediately = surgeActive || cell.count >= critMass(r, c);
+    const willExplodeImmediately = cell.count >= critMass(r, c);
     if (window.sfxPlace && !willExplodeImmediately) sfxPlace();
     triggerHaptic(12);
     chainCandidates = new Set(); if (willExplodeImmediately) chainCandidates.add(r * 100 + c);
@@ -2313,16 +2377,40 @@ async function handleClick(r, c) {
         return;
     }
 
+    // Passive Surge: if Voltage earned a free turn this move, stay on their turn
+    if (nuclearMode && S._nrSurgeFreeThisTurn) {
+        S._nrSurgeFreeThisTurn = false;
+        markAllDirty(); renderAll();
+        S.animating = false;
+        syncUndoBtn();
+        startPlayerTimer();
+        if (onlineMode) {
+            await pushStateToFirebase();
+            S.pendingMove = null;
+            if (!S.over) S.turnDeadline = serverNow() + TURN_TIMER_MS;
+            updateOnlineInteractivity();
+        } else if (IS_AI[S.current]) {
+            scheduleAiTurn();
+        } else {
+            setGridInteractive(true);
+        }
+        return;
+    }
+
     // Advance to next non-eliminated player
     let next = (S.current + 1) % PCOLORS.length;
     let guard = 0;
     while (S.eliminated[next] && guard++ < PCOLORS.length)
         next = (next + 1) % PCOLORS.length;
+    // Reset surge-used flag whenever the turn actually moves to a new player
+    if (nuclearMode) S._nrSurgeUsedThisTurn = 0;
     // Only count a new turn when we've cycled back past the start of the round
     if (next <= S.current) {
         S.turn = (S.turn || 0) + 1;
-        // NR: decrement frozen cells once per full round
+        // NR: decrement frozen cells and Surge counter once per full round
         if (nuclearMode) {
+            // Snapshot orb counts NOW (end of round = start of next round) for underdog check
+            _nrRoundStartOrbs = [...S.orbCount];
             for (let r2 = 0; r2 < cfg.rows; r2++) {
                 for (let c2 = 0; c2 < cfg.cols; c2++) {
                     const cell = S.grid[r2][c2];
@@ -2331,6 +2419,21 @@ async function handleClick(r, c) {
                         if (cell.frozen === 0) { cell.frozenBy = -1; cell._cryoFrozen = false; }
                         markDirty(r2, c2);
                     }
+                }
+            }
+            if (S.nrSurge) {
+                for (let si = 0; si < S.nrSurge.length; si++) {
+                    if (S.nrSurge[si] > 0) S.nrSurge[si]--;
+                }
+            }
+            // Flat meter bonus per round — scaled by orb count vs average (catchup mechanic)
+            if (S.nrMeter) {
+                const alive = S.orbCount.filter((_, i) => !S.eliminated[i]);
+                const avgOrbs = alive.length ? alive.reduce((a, b) => a + b, 0) / alive.length : 0;
+                for (let pi = 0; pi < PCOLORS.length; pi++) {
+                    if (S.eliminated[pi]) continue;
+                    const bonus = S.orbCount[pi] < avgOrbs ? 8 : 3;
+                    S.nrMeter[pi] = Math.min(NR_METER_MAX, (S.nrMeter[pi] || 0) + bonus);
                 }
             }
         }
@@ -2344,7 +2447,8 @@ async function handleClick(r, c) {
     startPlayerTimer();
     // NR turn-start effects: ice wall expires, process ignite/frozen on new current player
     if (nuclearMode) {
-        if (S.nrIceWall) S.nrIceWall[S.current] = false; // ice wall lasted one turn
+        if (S.nrIceWall)     S.nrIceWall[S.current]     = false; // ice wall lasted one turn
+        if (S.nrStaticField) S.nrStaticField[S.current] = false; // static field lasted one turn
         // Check blackout — skip this player's turn
         if (S.nrBlackout && S.nrBlackout[S.current]) {
             S.nrBlackout[S.current] = false;
@@ -2383,9 +2487,152 @@ async function handleClick(r, c) {
     }
 }
 
-/* ══════════════════════════════════════════════════════════════════
-   NUCLEAR REACTION MODE ENGINE
-   ══════════════════════════════════════════════════════════════════ */
+/* ── NR ability animation helpers ── */
+function nrFlashCell(r, c, cls, delay = 0) {
+    const el = cellEl(r, c); if (!el) return;
+    setTimeout(() => {
+        el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls);
+        setTimeout(() => el.classList.remove(cls), 750);
+    }, delay);
+}
+function nrFlashRow(row, cls) {
+    for (let c = 0; c < cfg.cols; c++) nrFlashCell(row, c, cls, c * 30);
+}
+function nrFlashCol(col, cls, color) {
+    for (let r = 0; r < cfg.rows; r++) nrFlashCell(r, col, cls, r * 30);
+}
+function nrFlashArea(centerR, centerC, radius, cls) {
+    for (let dr = -radius; dr <= radius; dr++)
+        for (let dc = -radius; dc <= radius; dc++)
+            nrFlashCell(centerR + dr, centerC + dc, cls, (Math.abs(dr) + Math.abs(dc)) * 25);
+}
+function nrFlashBoard(filterFn, cls) {
+    for (let r = 0; r < cfg.rows; r++)
+        for (let c = 0; c < cfg.cols; c++)
+            if (filterFn(r, c)) nrFlashCell(r, c, cls, (r + c) * 18);
+}
+function nrFlashCard(playerIdx, cls) {
+    const card = document.getElementById(`pc${playerIdx}`);
+    if (!card) return;
+    card.classList.remove(cls); void card.offsetWidth; card.classList.add(cls);
+    setTimeout(() => card.classList.remove(cls), 750);
+}
+
+function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
+    switch (abilId) {
+        case 'airstrike':
+            if (target) nrFlashCell(target.r, target.c, 'nr-airstrike-target');
+            break;
+        case 'detonation_wave':
+            nrFlashBoard((r, c) => {
+                const cell = S.grid[r][c];
+                return cell.owner !== -1 && cell.owner !== playerIdx && cell.count === critMass(r, c) - 1;
+            }, 'nr-detwave-flash');
+            break;
+        case 'undertow':
+            for (let r2 = 0; r2 < cfg.rows; r2++)
+                for (let c2 = 0; c2 < cfg.cols; c2++) {
+                    const cell = S.grid[r2][c2];
+                    if (cell.owner !== -1 && cell.owner !== playerIdx && cell.count > 0) {
+                        const adjOwn = neighbors(r2, c2).some(([nr, nc]) => S.grid[nr][nc].owner === playerIdx);
+                        if (adjOwn) { nrFlashCell(r2, c2, 'nr-undertow-drain', (r2 + c2) * 20); }
+                    }
+                }
+            break;
+        case 'tidal_wave':
+            if (target) nrFlashCol(target.c, 'nr-col-flash');
+            break;
+        case 'riptide':
+            nrFlashBoard((r, c) => {
+                const er = r === 0 || r === cfg.rows - 1 || c === 0 || c === cfg.cols - 1;
+                return er && neighbors(r, c).some(([nr, nc]) => S.grid[nr][nc].owner === playerIdx);
+            }, 'nr-riptide-flash');
+            break;
+        case 'overgrowth':
+            if (target)
+                for (let dr = -1; dr <= 1; dr++)
+                    for (let dc = -1; dc <= 1; dc++)
+                        nrFlashCell(target.r + dr, target.c + dc, 'nr-overgrowth-bloom', (Math.abs(dr) + Math.abs(dc)) * 25);
+            break;
+        case 'pandemic':
+            nrFlashBoard((r, c) => S.grid[r][c].owner !== -1 && S.grid[r][c].owner !== playerIdx, 'nr-pandemic-drain');
+            break;
+        case 'surge':
+            nrFlashCard(playerIdx, 'nr-surge-activate');
+            break;
+        case 'static_field':
+            nrFlashBoard((r, c) => S.grid[r][c].owner === playerIdx, 'nr-staticfield-shield');
+            break;
+        case 'blackout':
+            if (target && target.targetPlayer !== undefined) nrFlashCard(target.targetPlayer, 'nr-blackout-hit');
+            break;
+        case 'phantom_step':
+            if (secondTarget) nrFlashCell(secondTarget.r, secondTarget.c, 'nr-phantom-src');
+            if (target)       nrFlashCell(target.r, target.c, 'nr-phantom-dst');
+            break;
+        case 'swap':
+            if (secondTarget) nrFlashCell(secondTarget.r, secondTarget.c, 'nr-swap-flash');
+            if (target)       nrFlashCell(target.r, target.c, 'nr-swap-flash');
+            break;
+        case 'void_rift':
+            // 2×2 from top-left anchor
+            if (target)
+                for (let dr = 0; dr <= 1; dr++)
+                    for (let dc = 0; dc <= 1; dc++) {
+                        const r2 = target.r + dr, c2 = target.c + dc;
+                        if (r2 < 0 || r2 >= cfg.rows || c2 < 0 || c2 >= cfg.cols) continue;
+                        const cls = S.grid[r2][c2].owner === playerIdx ? 'nr-voidrift-boost' : 'nr-voidrift-erase';
+                        nrFlashCell(r2, c2, cls, (dr + dc) * 40);
+                    }
+            break;
+        case 'permafrost':
+            if (target) {
+                nrFlashCell(target.r, target.c, 'nr-permafrost-hit');
+                neighbors(target.r, target.c).forEach(([nr, nc]) => nrFlashCell(nr, nc, 'nr-permafrost-hit', 80));
+            }
+            break;
+        case 'ice_wall':
+            nrFlashBoard((r, c) => S.grid[r][c].owner === playerIdx, 'nr-icewall-shimmer');
+            break;
+        case 'absolute_zero':
+            nrFlashBoard((r, c) => {
+                const cell = S.grid[r][c];
+                return cell.owner !== -1 && cell.owner !== playerIdx && cell.count >= critMass(r, c) - 1;
+            }, 'nr-absz-flash');
+            break;
+        case 'ignite':
+            if (target) nrFlashCell(target.r, target.c, 'nr-ignite-mark');
+            break;
+        case 'ember':
+            if (target)
+                for (let dr = 0; dr <= 1; dr++)
+                    for (let dc = 0; dc <= 1; dc++)
+                        nrFlashCell(target.r + dr, target.c + dc, 'nr-ember-mark', (dr + dc) * 60);
+            break;
+        case 'encircle':
+            nrFlashBoard((r, c) => {
+                const cell = S.grid[r][c];
+                if (cell.owner === -1 || cell.owner === playerIdx) return false;
+                return neighbors(r, c).filter(([nr, nc]) => S.grid[nr][nc].owner === playerIdx).length >= 2;
+            }, 'nr-encircle-hit');
+            break;
+        case 'corrode':
+            if (target)
+                for (let dr = 0; dr <= 1; dr++)
+                    for (let dc = 0; dc <= 1; dc++)
+                        nrFlashCell(target.r + dr, target.c + dc, 'nr-corrode-hit', (dr + dc) * 40);
+            break;
+        case 'infect':
+            if (target) nrFlashCell(target.r, target.c, 'nr-infect-mark-flash');
+            break;
+        case 'decay':
+            if (target) {
+                nrFlashCell(target.r, target.c, 'nr-decay-hit');
+                neighbors(target.r, target.c).forEach(([nr, nc], i) => nrFlashCell(nr, nc, 'nr-decay-hit', 60 + i * 40));
+            }
+            break;
+    }
+}
 
 /* ── Helper: get character ability ID for player i at their current queue slot ── */
 function nrCurrentAbilityId(playerIdx) {
@@ -2442,12 +2689,33 @@ function nrEnterTargeting(player, abilId, phase, firstCell) {
     const t = NR_ABILITIES[abilId].targeting;
     const abilName = NR_ABILITIES[abilId].name;
     if (label) {
-        if (t === 'row')        label.textContent = `${abilName}: click any cell to select its row`;
-        else if (t === 'col')   label.textContent = `${abilName}: click any cell to select its column`;
-        else if (t === 'player') label.textContent = `${abilName}: click an opponent's card`;
-        else if (t === 'cell2_own' && phase === 2) label.textContent = `${abilName}: select destination cell`;
-        else if (t === 'cell2_any' && phase === 2) label.textContent = `${abilName}: select second cell`;
-        else label.textContent = `${abilName}: select a target cell`;
+        const hints = {
+            airstrike:       'Airstrike — click any cell to force it to explode in your color',
+            carpet_bomb:     'Carpet Bomb — hover to highlight the row, click to destroy 1 orb from every enemy cell in it',
+            detonation_wave: null,
+            undertow:        null,
+            riptide:         null,
+            tidal_wave:      'Tidal Wave — hover to highlight the column, click to convert all 1–2 orb enemies in it',
+            creep:           null,
+            overgrowth:      'Overgrowth — hover to preview the 3×3 area; only valid if it contains one of your cells. Claims empty cells and adds +1 to your cells below near-critical',
+            pandemic:        null,
+            surge:           'Surge — activate for 3 rounds: hitting a 5+ chain grants a free extra turn, up to 2 per turn',
+            static_field:    'Static Field — activate to absorb enemy chains this turn. Immune to Pandemic — gains +1 orb instead of losing one',
+            blackout:        'Blackout — click an opponent\'s player card to skip their next turn. Also activates Surge for 3 rounds',
+            phantom_step:    phase === 1 ? 'Phantom Step — click one of your cells to move it' : 'Phantom Step — click an empty cell as the destination',
+            swap:            phase === 1 ? 'Swap — click the first cell to swap' : 'Swap — click the second cell (triggers explosion check)',
+            void_rift:       'Void Rift — hover to preview the 2×2 area. Erases all enemy orbs inside and adds +2 to each of your own cells (triggers explosion check)',
+            permafrost:      'Permafrost — click an enemy cell to freeze it and its neighbors for 2 rounds. Your chains can thaw them and detonate in your color',
+            ice_wall:        'Ice Wall — activate to make your cells unconvertible until your next turn',
+            absolute_zero:   null,
+            ignite:          'Ignite — click your own cell: 2 auto-explosions in your color. Click an enemy cell: 1 forced explosion in your color next turn. If a chain touches it first, it immediately explodes in your color',
+            ember:           'Ember — hover for 2×2 preview; click to permanently mark your cells in the area as traps. Each marked cell repels the next enemy chain that hits it, then the mark is consumed',
+            encircle:        null,
+            corrode:         'Corrode — hover to preview the 2×2 area, click to reduce every enemy cell inside it to 1 orb',
+            infect:          'Infect — click an enemy cell to mark it; when it explodes the spread converts to your color',
+            decay:           'Decay — click any enemy cell: converts it to 2 orbs of yours, then BFS spreads to every connected enemy cell — 1-orb cells convert to 2-orb Venom cells, 2+ orb cells lose 1 orb. Spread never stops',
+        };
+        label.textContent = hints[abilId] || `${NR_ABILITIES[abilId].name} — select a target`;
     }
     if (bar) bar.style.display = '';
     if (cancelBtn) cancelBtn.style.display = '';
@@ -2458,11 +2726,42 @@ function nrEnterTargeting(player, abilId, phase, firstCell) {
             el.addEventListener('mouseleave', _nrVoidRiftUnhover);
         });
     }
+    if (abilId === 'overgrowth') {
+        document.querySelectorAll('.cell').forEach(el => {
+            el.addEventListener('mouseenter', _nrOvergrowthHover);
+            el.addEventListener('mouseleave', _nrOvergrowthUnhover);
+        });
+    }
+    if (abilId === 'ember') {
+        document.querySelectorAll('.cell').forEach(el => {
+            el.addEventListener('mouseenter', _nrEmberHover);
+            el.addEventListener('mouseleave', _nrEmberUnhover);
+        });
+    }
+    if (abilId === 'corrode') {
+        document.querySelectorAll('.cell').forEach(el => {
+            el.addEventListener('mouseenter', _nrCorredeHover);
+            el.addEventListener('mouseleave', _nrCorredeUnhover);
+        });
+    }
+    if (abilId === 'carpet_bomb') {
+        document.querySelectorAll('.cell').forEach(el => {
+            el.addEventListener('mouseenter', _nrRowHover);
+            el.addEventListener('mouseleave', _nrRowUnhover);
+        });
+    }
+    if (abilId === 'tidal_wave') {
+        document.querySelectorAll('.cell').forEach(el => {
+            el.addEventListener('mouseenter', _nrColHover);
+            el.addEventListener('mouseleave', _nrColUnhover);
+        });
+    }
 }
 
 function _nrVoidRiftHover(e) {
     _nrVoidRiftUnhover();
     const r = +e.currentTarget.dataset.r, c = +e.currentTarget.dataset.c;
+    // 2×2 starting from clicked cell (top-left)
     for (let dr = 0; dr <= 1; dr++)
         for (let dc = 0; dc <= 1; dc++) {
             const el = cellEl(r + dr, c + dc);
@@ -2473,13 +2772,87 @@ function _nrVoidRiftUnhover() {
     document.querySelectorAll('.cell.nr-void-preview').forEach(el => el.classList.remove('nr-void-preview'));
 }
 
+function _nrOvergrowthHover(e) {
+    _nrOvergrowthUnhover();
+    const r = +e.currentTarget.dataset.r, c = +e.currentTarget.dataset.c;
+    // 3×3 centered on hovered cell
+    for (let dr = -1; dr <= 1; dr++)
+        for (let dc = -1; dc <= 1; dc++) {
+            const el = cellEl(r + dr, c + dc);
+            if (el) el.classList.add('nr-overgrowth-preview');
+        }
+}
+function _nrOvergrowthUnhover() {
+    document.querySelectorAll('.cell.nr-overgrowth-preview').forEach(el => el.classList.remove('nr-overgrowth-preview'));
+}
+
+function _nrEmberHover(e) {
+    _nrEmberUnhover();
+    const r = +e.currentTarget.dataset.r, c = +e.currentTarget.dataset.c;
+    for (let dr = 0; dr <= 1; dr++)
+        for (let dc = 0; dc <= 1; dc++) {
+            const el = cellEl(r + dr, c + dc);
+            if (el) el.classList.add('nr-ember-preview');
+        }
+}
+function _nrEmberUnhover() {
+    document.querySelectorAll('.cell.nr-ember-preview').forEach(el => el.classList.remove('nr-ember-preview'));
+}
+
+function _nrCorredeHover(e) {
+    _nrCorredeUnhover();
+    const r = +e.currentTarget.dataset.r, c = +e.currentTarget.dataset.c;
+    for (let dr = 0; dr <= 1; dr++)
+        for (let dc = 0; dc <= 1; dc++) {
+            const el = cellEl(r + dr, c + dc);
+            if (el) el.classList.add('nr-corrode-preview');
+        }
+}
+function _nrCorredeUnhover() {
+    document.querySelectorAll('.cell.nr-corrode-preview').forEach(el => el.classList.remove('nr-corrode-preview'));
+}
+
+function _nrRowHover(e) {
+    _nrRowUnhover();
+    const r = +e.currentTarget.dataset.r;
+    for (let c = 0; c < cfg.cols; c++) {
+        const el = cellEl(r, c);
+        if (el) el.classList.add('nr-row-preview');
+    }
+}
+function _nrRowUnhover() {
+    document.querySelectorAll('.cell.nr-row-preview').forEach(el => el.classList.remove('nr-row-preview'));
+}
+
+function _nrColHover(e) {
+    _nrColUnhover();
+    const c = +e.currentTarget.dataset.c;
+    for (let r = 0; r < cfg.rows; r++) {
+        const el = cellEl(r, c);
+        if (el) el.classList.add('nr-col-preview');
+    }
+}
+function _nrColUnhover() {
+    document.querySelectorAll('.cell.nr-col-preview').forEach(el => el.classList.remove('nr-col-preview'));
+}
+
 function nrExitTargeting() {
     _nrTargeting = null;
     document.getElementById('grid').classList.remove('nr-targeting');
     document.querySelectorAll('.cell').forEach(el => {
-        el.classList.remove('nr-valid', 'nr-invalid', 'nr-selected', 'nr-void-preview');
+        el.classList.remove('nr-valid', 'nr-invalid', 'nr-selected', 'nr-void-preview', 'nr-ember-preview', 'nr-row-preview', 'nr-col-preview', 'nr-overgrowth-preview', 'nr-corrode-preview');
         el.removeEventListener('mouseenter', _nrVoidRiftHover);
         el.removeEventListener('mouseleave', _nrVoidRiftUnhover);
+        el.removeEventListener('mouseenter', _nrOvergrowthHover);
+        el.removeEventListener('mouseleave', _nrOvergrowthUnhover);
+        el.removeEventListener('mouseenter', _nrEmberHover);
+        el.removeEventListener('mouseleave', _nrEmberUnhover);
+        el.removeEventListener('mouseenter', _nrCorredeHover);
+        el.removeEventListener('mouseleave', _nrCorredeUnhover);
+        el.removeEventListener('mouseenter', _nrRowHover);
+        el.removeEventListener('mouseleave', _nrRowUnhover);
+        el.removeEventListener('mouseenter', _nrColHover);
+        el.removeEventListener('mouseleave', _nrColUnhover);
     });
     for (let i = 0; i < PCOLORS.length; i++) {
         const card = document.getElementById(`pc${i}`);
@@ -2517,6 +2890,30 @@ function nrHighlightCellTargets(playerIdx, abilId, phase) {
         if (t === 'col')         valid = true;
         if (t === 'cell2_own')   valid = phase === 1 ? cell.owner === playerIdx : cell.owner === -1;
         if (t === 'cell2_any')   valid = true;
+        // Ignite: only occupied cells (own or enemy), not empty
+        if (abilId === 'ignite' && valid) valid = cell.owner !== -1;
+        // Corrode: only valid if the 2×2 area from this cell contains at least one enemy
+        if (abilId === 'corrode' && valid) {
+            let hasEnemy = false;
+            for (let dr = 0; dr <= 1 && !hasEnemy; dr++)
+                for (let dc = 0; dc <= 1 && !hasEnemy; dc++) {
+                    const r2 = r + dr, c2 = c + dc;
+                    if (r2 < cfg.rows && c2 < cfg.cols && S.grid[r2][c2].owner !== -1 && S.grid[r2][c2].owner !== playerIdx)
+                        hasEnemy = true;
+                }
+            valid = hasEnemy;
+        }
+        // Overgrowth special: only valid if 3×3 area around this cell contains at least one owned cell
+        if (abilId === 'overgrowth' && valid) {
+            let hasOwned = false;
+            for (let dr = -1; dr <= 1 && !hasOwned; dr++)
+                for (let dc = -1; dc <= 1 && !hasOwned; dc++) {
+                    const r2 = r + dr, c2 = c + dc;
+                    if (r2 >= 0 && r2 < cfg.rows && c2 >= 0 && c2 < cfg.cols)
+                        if (S.grid[r2][c2].owner === playerIdx) hasOwned = true;
+                }
+            valid = hasOwned;
+        }
         el.classList.toggle('nr-valid',   valid);
         el.classList.toggle('nr-invalid', !valid);
     });
@@ -2548,6 +2945,29 @@ function nrHandleCellTarget(r, c) {
     if (t === 'col')         valid = true;
     if (t === 'cell2_own')   valid = phase === 1 ? cell.owner === player : cell.owner === -1;
     if (t === 'cell2_any')   valid = true;
+    if (abilId === 'ignite' && valid) valid = cell.owner !== -1;
+    // Overgrowth: reject if no owned cell in 3×3 area
+    if (abilId === 'overgrowth' && valid) {
+        let hasOwned = false;
+        for (let dr = -1; dr <= 1 && !hasOwned; dr++)
+            for (let dc = -1; dc <= 1 && !hasOwned; dc++) {
+                const r2 = r + dr, c2 = c + dc;
+                if (r2 >= 0 && r2 < cfg.rows && c2 >= 0 && c2 < cfg.cols)
+                    if (S.grid[r2][c2].owner === player) hasOwned = true;
+            }
+        valid = hasOwned;
+    }
+    // Corrode: reject if 2×2 area has no enemy cells
+    if (abilId === 'corrode' && valid) {
+        let hasEnemy = false;
+        for (let dr = 0; dr <= 1 && !hasEnemy; dr++)
+            for (let dc = 0; dc <= 1 && !hasEnemy; dc++) {
+                const r2 = r + dr, c2 = c + dc;
+                if (r2 < cfg.rows && c2 < cfg.cols && S.grid[r2][c2].owner !== -1 && S.grid[r2][c2].owner !== player)
+                    hasEnemy = true;
+            }
+        valid = hasEnemy;
+    }
 
     if (!valid) return;
 
@@ -2580,6 +3000,8 @@ function nrHandlePlayerTarget(targetIdx) {
 
 /* ── Execute ability ── */
 function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
+    // Centralized pre-ability animations
+    if (nuclearMode) nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget);
     switch (abilId) {
 
         /* RED — WARHEAD */
@@ -2597,8 +3019,9 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
             const cm = critMass(r, c);
             const delta = cm - cell.count;
             if (delta > 0) { cell.count += delta; S.orbCount[cell.owner] += delta; }
-            chainCandidates = new Set([r * 100 + c]);
             markDirty(r, c);
+            chainCandidates = new Set();
+            chainCandidates.add(r * 100 + c);
             nrPostAbility(playerIdx);
             nrRunChainAfterAbility(playerIdx);
             break;
@@ -2606,6 +3029,7 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
 
         case 'carpet_bomb': {
             const row = target.r;
+            nrFlashRow(row, 'nr-row-flash');
             for (let c2 = 0; c2 < cfg.cols; c2++) {
                 const cell = S.grid[row][c2];
                 if (cell.count > 0 && cell.owner !== playerIdx) {
@@ -2615,6 +3039,7 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
                     markDirty(row, c2);
                 }
             }
+            nrFlashRow(row, 'nr-row-flash');
             nrPostAbility(playerIdx);
             renderAll();
             nrFinishAbilityTurn(playerIdx);
@@ -2622,6 +3047,7 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
         }
 
         case 'detonation_wave': {
+            const detTargets = [];
             for (let r2 = 0; r2 < cfg.rows; r2++) {
                 for (let c2 = 0; c2 < cfg.cols; c2++) {
                     const cell = S.grid[r2][c2];
@@ -2631,9 +3057,11 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
                         if (cell.count <= 0) { cell.count = 0; cell.owner = -1; }
                         else { cell.owner = playerIdx; S.orbCount[playerIdx] += cell.count; }
                         markDirty(r2, c2);
+                        detTargets.push([r2, c2]);
                     }
                 }
             }
+            detTargets.forEach(([r2, c2]) => nrFlashCell(r2, c2, 'nr-detwave-flash', (r2 + c2) * 15));
             nrPostAbility(playerIdx);
             renderAll();
             nrFinishAbilityTurn(playerIdx);
@@ -2649,7 +3077,6 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
                     if (cell.owner !== -1 && cell.owner !== playerIdx && cell.count > 0) {
                         const adjOwn = neighbors(r2, c2).filter(([nr, nc]) => S.grid[nr][nc].owner === playerIdx);
                         if (adjOwn.length === 0) continue;
-                        // Find own bordering cell with lowest count
                         adjOwn.sort((a, b) => S.grid[a[0]][a[1]].count - S.grid[b[0]][b[1]].count);
                         const [tr, tc] = adjOwn[0];
                         S.orbCount[cell.owner]--;
@@ -2657,13 +3084,14 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
                         if (cell.count <= 0) { cell.count = 0; cell.owner = -1; }
                         S.grid[tr][tc].count++;
                         S.orbCount[playerIdx]++;
+                        if (S.grid[tr][tc].count >= critMass(tr, tc)) chainCandidates.add(tr * 100 + tc);
                         markDirty(r2, c2); markDirty(tr, tc);
                     }
                 }
             }
             nrPostAbility(playerIdx);
-            renderAll();
-            nrFinishAbilityTurn(playerIdx);
+            if (chainCandidates.size > 0) nrRunChainAfterAbility(playerIdx);
+            else { renderAll(); nrFinishAbilityTurn(playerIdx); }
             break;
         }
 
@@ -2709,19 +3137,26 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
 
         /* GREEN — BLIGHT */
         case 'creep': {
-            // Snapshot candidates first to avoid cascade during same pass
+            // Claim empty cells AND 1-orb enemy cells adjacent to any of your cells
             const toCreep = [];
             for (let r2 = 0; r2 < cfg.rows; r2++) {
                 for (let c2 = 0; c2 < cfg.cols; c2++) {
-                    if (S.grid[r2][c2].owner !== -1) continue;
+                    const cell = S.grid[r2][c2];
+                    const isTarget = cell.owner === -1 || (cell.owner !== playerIdx && cell.count === 1);
+                    if (!isTarget) continue;
                     const adjOwn = neighbors(r2, c2).some(([nr, nc]) => S.grid[nr][nc].owner === playerIdx);
                     if (adjOwn) toCreep.push([r2, c2]);
                 }
             }
             for (const [r2, c2] of toCreep) {
-                S.grid[r2][c2].owner = playerIdx;
-                S.grid[r2][c2].count = 1;
+                const cell = S.grid[r2][c2];
+                if (cell.owner !== -1 && cell.owner !== playerIdx) {
+                    S.orbCount[cell.owner] -= cell.count;
+                }
+                cell.owner = playerIdx;
+                cell.count = 1;
                 S.orbCount[playerIdx]++;
+                nrFlashCell(r2, c2, 'nr-creep-claim', (r2 + c2) * 25);
                 markDirty(r2, c2);
             }
             nrPostAbility(playerIdx);
@@ -2731,34 +3166,33 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
         }
 
         case 'overgrowth': {
-            // Convert empty cells within 1-cell radius of the chosen own cell (anchor)
+            // 3×3 square centered on target cell — only works if area contains at least 1 owned cell
             const { r: or, c: oc } = target;
+            const hasOwned = (() => {
+                for (let dr = -1; dr <= 1; dr++)
+                    for (let dc = -1; dc <= 1; dc++) {
+                        const r2 = or + dr, c2 = oc + dc;
+                        if (r2 >= 0 && r2 < cfg.rows && c2 >= 0 && c2 < cfg.cols)
+                            if (S.grid[r2][c2].owner === playerIdx) return true;
+                    }
+                return false;
+            })();
+            if (!hasOwned) { renderAll(); nrFinishAbilityTurn(playerIdx); break; }
             for (let dr = -1; dr <= 1; dr++) {
                 for (let dc = -1; dc <= 1; dc++) {
-                    if (dr === 0 && dc === 0) continue;
-                    const nr = or + dr, nc = oc + dc;
-                    if (nr < 0 || nr >= cfg.rows || nc < 0 || nc >= cfg.cols) continue;
-                    if (S.grid[nr][nc].owner !== -1) continue;
-                    S.grid[nr][nc].owner = playerIdx;
-                    S.grid[nr][nc].count = 1;
-                    S.orbCount[playerIdx]++;
-                    markDirty(nr, nc);
-                }
-            }
-            nrPostAbility(playerIdx);
-            renderAll();
-            nrFinishAbilityTurn(playerIdx);
-            break;
-        }
-
-        case 'pandemic': {
-            for (let r2 = 0; r2 < cfg.rows; r2++) {
-                for (let c2 = 0; c2 < cfg.cols; c2++) {
+                    const r2 = or + dr, c2 = oc + dc;
+                    if (r2 < 0 || r2 >= cfg.rows || c2 < 0 || c2 >= cfg.cols) continue;
                     const cell = S.grid[r2][c2];
-                    if (cell.owner !== -1 && cell.owner !== playerIdx && cell.count > 0) {
-                        S.orbCount[cell.owner]--;
-                        cell.count--;
-                        if (cell.count <= 0) { cell.count = 0; cell.owner = -1; }
+                    if (cell.owner === playerIdx) {
+                        if (cell.count < critMass(r2, c2) - 1) {
+                            cell.count++;
+                            S.orbCount[playerIdx]++;
+                            markDirty(r2, c2);
+                        }
+                    } else if (cell.owner === -1) {
+                        cell.owner = playerIdx;
+                        cell.count = 1;
+                        S.orbCount[playerIdx]++;
                         markDirty(r2, c2);
                     }
                 }
@@ -2769,17 +3203,64 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
             break;
         }
 
+        case 'pandemic': {
+            // Phase 1: enemy cells lose 1 orb — Static Field owners are immune (gain +1 instead)
+            for (let r2 = 0; r2 < cfg.rows; r2++) {
+                for (let c2 = 0; c2 < cfg.cols; c2++) {
+                    const cell = S.grid[r2][c2];
+                    if (cell.owner === -1 || cell.owner === playerIdx) continue;
+                    if (nuclearMode && S.nrStaticField && S.nrStaticField[cell.owner]) {
+                        // Static Field immunity: absorb the pandemic as an orb boost
+                        cell.count++;
+                        S.orbCount[cell.owner]++;
+                        if (cell.count >= critMass(r2, c2)) chainCandidates.add(r2 * 100 + c2);
+                        markDirty(r2, c2);
+                    } else if (cell.count > 0) {
+                        S.orbCount[cell.owner]--;
+                        cell.count--;
+                        if (cell.count <= 0) { cell.count = 0; cell.owner = -1; }
+                        markDirty(r2, c2);
+                    }
+                }
+            }
+            // Phase 2: own cells gain 1 orb — skip near-critical cells (count >= critMass - 1)
+            for (let r2 = 0; r2 < cfg.rows; r2++) {
+                for (let c2 = 0; c2 < cfg.cols; c2++) {
+                    const cell = S.grid[r2][c2];
+                    if (cell.owner === playerIdx && cell.count < critMass(r2, c2) - 1) {
+                        cell.count++;
+                        S.orbCount[playerIdx]++;
+                        markDirty(r2, c2);
+                    }
+                }
+            }
+            nrPostAbility(playerIdx);
+            if (chainCandidates.size > 0) nrRunChainAfterAbility(playerIdx);
+            else { renderAll(); nrFinishAbilityTurn(playerIdx); }
+            break;
+        }
+
         /* YELLOW — VOLTAGE */
         case 'surge': {
-            S.nrSurge[playerIdx] = true; // handled in handleClick
-            nrPostAbility(playerIdx);
-            nrFinishAbilityTurn(playerIdx);
+            if (S.nrSurge) S.nrSurge[playerIdx] = 3; // passive active for 3 full rounds
+            // Advance ability queue and reset meter, but do NOT advance the turn —
+            // Voltage keeps their turn to make a normal move after activating Surge.
+            nrAdvanceAbility(playerIdx);
+            checkEliminationsAndWin();
+            markAllDirty(); renderAll();
+            if (onlineMode) {
+                pushStateToFirebase();
+                updateOnlineInteractivity();
+            } else if (IS_AI[playerIdx]) {
+                scheduleAiTurn();
+            } else {
+                setGridInteractive(true);
+            }
             break;
         }
 
         case 'static_field': {
-            // TODO phase 2: chain hook — mark self as immune this turn
-            S.nrIceWall[playerIdx] = true; // reuse ice_wall flag for now (same effect)
+            if (S.nrStaticField) S.nrStaticField[playerIdx] = true;
             nrPostAbility(playerIdx);
             nrFinishAbilityTurn(playerIdx);
             break;
@@ -2787,7 +3268,11 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
 
         case 'blackout': {
             const t2 = target.targetPlayer;
-            if (t2 !== undefined && !S.eliminated[t2]) S.nrBlackout[t2] = true;
+            if (t2 !== undefined && !S.eliminated[t2]) {
+                S.nrBlackout[t2] = true; // immediate skip handled in nrFinishAbilityTurn
+            }
+            // Blackout also activates Surge passive for Voltage for 5 turns
+            if (S.nrSurge) S.nrSurge[playerIdx] = 3;
             nrPostAbility(playerIdx);
             nrFinishAbilityTurn(playerIdx);
             break;
@@ -2844,9 +3329,9 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
         }
 
         case 'void_rift': {
-            // Erase enemy orbs in 3×3 area centered on target cell
-            for (let dr = -1; dr <= 1; dr++) {
-                for (let dc = -1; dc <= 1; dc++) {
+            // 2×2 area: target cell is top-left anchor
+            for (let dr = 0; dr <= 1; dr++) {
+                for (let dc = 0; dc <= 1; dc++) {
                     const r2 = target.r + dr, c2 = target.c + dc;
                     if (r2 < 0 || r2 >= cfg.rows || c2 < 0 || c2 >= cfg.cols) continue;
                     const cell = S.grid[r2][c2];
@@ -2855,12 +3340,17 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
                         cell.count = 0; cell.owner = -1;
                         cell.infect = -1; cell.backdraft = -1;
                         markDirty(r2, c2);
+                    } else if (cell.owner === playerIdx) {
+                        cell.count += 2;
+                        S.orbCount[playerIdx] += 2;
+                        if (cell.count >= critMass(r2, c2)) chainCandidates.add(r2 * 100 + c2);
+                        markDirty(r2, c2);
                     }
                 }
             }
             nrPostAbility(playerIdx);
-            renderAll();
-            nrFinishAbilityTurn(playerIdx);
+            if (chainCandidates.size > 0) nrRunChainAfterAbility(playerIdx);
+            else { renderAll(); nrFinishAbilityTurn(playerIdx); }
             break;
         }
 
@@ -2871,7 +3361,7 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
             toFreeze.forEach(([r2, c2]) => {
                 const cell = S.grid[r2][c2];
                 if (cell.owner !== -1 && cell.owner !== playerIdx) {
-                    cell.frozen = 1;
+                    cell.frozen = 2;
                     cell._cryoFrozen = true;
                     cell.frozenBy = playerIdx;
                     markDirty(r2, c2);
@@ -2891,12 +3381,12 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
         }
 
         case 'absolute_zero': {
-            // Freeze every enemy cell currently at critical mass for 2 turns
+            // Freeze every enemy cell at critMass - 1 for 3 turns
             for (let r2 = 0; r2 < cfg.rows; r2++) {
                 for (let c2 = 0; c2 < cfg.cols; c2++) {
                     const cell = S.grid[r2][c2];
-                    if (cell.owner !== -1 && cell.owner !== playerIdx && cell.count >= critMass(r2, c2)) {
-                        cell.frozen = 2;
+                    if (cell.owner !== -1 && cell.owner !== playerIdx && cell.count >= critMass(r2, c2) - 1) {
+                        cell.frozen = 3;
                         cell._cryoFrozen = true;
                         cell.frozenBy = playerIdx;
                         markDirty(r2, c2);
@@ -2912,38 +3402,95 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
         /* ORANGE — NAPALM */
         case 'ignite': {
             const { r: ir, c: ic } = target;
-            if (S.grid[ir][ic].owner === playerIdx) S.grid[ir][ic].ignite = 2;
+            const igCell = S.grid[ir][ic];
+            if (igCell.owner === playerIdx) {
+                // Own cell: explodes for 2 turns in Napalm's color, locked from incoming orbs
+                igCell.ignite = 2;
+                igCell.igniteOwner = playerIdx;
+                markDirty(ir, ic);
+            } else if (igCell.owner !== -1) {
+                // Enemy cell: explodes for 1 turn in Napalm's color, locked from incoming orbs
+                igCell.ignite = 1;
+                igCell.igniteOwner = playerIdx;
+                markDirty(ir, ic);
+            }
             nrPostAbility(playerIdx);
+            renderAll();
             nrFinishAbilityTurn(playerIdx);
             break;
         }
 
-        case 'backdraft': {
-            const { r: br, c: bc } = target;
-            if (S.grid[br][bc].owner !== playerIdx) S.grid[br][bc].backdraft = playerIdx;
+        case 'ember': {
+            // Mark a 2×2 area starting at the clicked own cell (top-left anchor)
+            const anchorR = target.r, anchorC = target.c;
+            for (let dr = 0; dr <= 1; dr++) {
+                for (let dc = 0; dc <= 1; dc++) {
+                    const r2 = anchorR + dr, c2 = anchorC + dc;
+                    if (r2 >= cfg.rows || c2 >= cfg.cols) continue;
+                    const cell = S.grid[r2][c2];
+                    if (cell.owner === playerIdx) cell.backdraft = playerIdx; // ember mark on own cells
+                    markDirty(r2, c2);
+                }
+            }
             nrPostAbility(playerIdx);
+            renderAll();
             nrFinishAbilityTurn(playerIdx);
             break;
         }
 
-        case 'firestorm': {
-            // TODO phase 2: chain hook — sets flag, handled in chainReact
-            S.nrFirestorm[playerIdx] = true;
+        case 'encircle': {
+            const cm_convert = {};  // 3+ neighbors → convert + ignite 2 turns
+            const cm_ignite1  = {}; // 2 neighbors → ignite 1 turn only (no conversion)
+            for (let r2 = 0; r2 < cfg.rows; r2++) {
+                for (let c2 = 0; c2 < cfg.cols; c2++) {
+                    const cell = S.grid[r2][c2];
+                    if (cell.owner === -1 || cell.owner === playerIdx) continue;
+                    const napalmNeighbors = neighbors(r2, c2).filter(([nr, nc]) => S.grid[nr][nc].owner === playerIdx).length;
+                    if (napalmNeighbors >= 3) cm_convert[r2 * 100 + c2] = true;
+                    else if (napalmNeighbors === 2) cm_ignite1[r2 * 100 + c2] = true;
+                }
+            }
+            // 3+ neighbors: convert to Napalm and set ignite 2 turns
+            for (const key of Object.keys(cm_convert)) {
+                const r2 = (parseInt(key) / 100) | 0, c2 = parseInt(key) % 100;
+                const cell = S.grid[r2][c2];
+                S.orbCount[cell.owner] -= cell.count;
+                cell.owner = playerIdx;
+                S.orbCount[playerIdx] += cell.count;
+                cell.ignite = 2;
+                cell.igniteOwner = playerIdx;
+                markDirty(r2, c2);
+            }
+            // 2 neighbors: enemy cell locked and set to explode in Napalm's color for 1 turn
+            for (const key of Object.keys(cm_ignite1)) {
+                if (cm_convert[key]) continue;
+                const r2 = (parseInt(key) / 100) | 0, c2 = parseInt(key) % 100;
+                const cell = S.grid[r2][c2];
+                cell.ignite = 1;
+                cell.igniteOwner = playerIdx;
+                markDirty(r2, c2);
+            }
             nrPostAbility(playerIdx);
+            renderAll();
             nrFinishAbilityTurn(playerIdx);
             break;
         }
 
         /* LIME — VENOM */
         case 'corrode': {
-            const { r: cr, c: cc } = target;
-            const cell = S.grid[cr][cc];
-            if (cell.owner !== -1 && cell.owner !== playerIdx) {
-                const remove = Math.min(2, cell.count);
-                S.orbCount[cell.owner] -= remove;
-                cell.count -= remove;
-                if (cell.count <= 0) { cell.count = 0; cell.owner = -1; }
-                markDirty(cr, cc);
+            // 2×2 area from top-left anchor — reduce each enemy cell to 1 orb
+            for (let dr = 0; dr <= 1; dr++) {
+                for (let dc = 0; dc <= 1; dc++) {
+                    const r2 = target.r + dr, c2 = target.c + dc;
+                    if (r2 >= cfg.rows || c2 >= cfg.cols) continue;
+                    const cell = S.grid[r2][c2];
+                    if (cell.owner !== -1 && cell.owner !== playerIdx && cell.count > 1) {
+                        const remove = cell.count - 1;
+                        S.orbCount[cell.owner] -= remove;
+                        cell.count = 1;
+                        markDirty(r2, c2);
+                    }
+                }
             }
             nrPostAbility(playerIdx);
             renderAll();
@@ -2962,31 +3509,57 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
         }
 
         case 'decay': {
+            // Venom ultimate: BFS through ALL connected enemy cells.
+            // 1-orb cells: convert to Venom and give +1 (becomes 2 orbs). Spreading continues from them.
+            // 2+ orb cells: drain 1 orb, stay enemy. Spreading STILL continues from them.
+            // Spread never stops — visits every reachable enemy cell.
             const { r: dr, c: dc } = target;
-            const cell = S.grid[dr][dc];
-            if (cell.owner !== -1 && cell.owner !== playerIdx) {
-                const decayOwner = cell.owner;
-                const remove = Math.floor(cell.count / 2);
-                S.orbCount[decayOwner] -= cell.count; // remove all, re-add remaining
-                cell.count -= remove;
-                if (cell.count <= 0) { cell.count = 0; cell.owner = -1; }
-                else { cell.owner = playerIdx; S.orbCount[playerIdx] += cell.count; }
-                markDirty(dr, dc);
-                // Adjacent cells of same original owner lose 1 orb and become yours
-                neighbors(dr, dc).forEach(([nr, nc]) => {
-                    const nc2 = S.grid[nr][nc];
-                    if (nc2.owner === decayOwner && nc2.count > 0) {
-                        S.orbCount[decayOwner] -= nc2.count;
-                        nc2.count--;
-                        if (nc2.count <= 0) { nc2.count = 0; nc2.owner = -1; }
-                        else { nc2.owner = playerIdx; S.orbCount[playerIdx] += nc2.count; }
-                        markDirty(nr, nc);
+            const startCell = S.grid[dr][dc];
+            if (startCell.owner === -1 || startCell.owner === playerIdx) break;
+
+            const visited = new Set([dr * 100 + dc]);
+            const queue = [[dr, dc]];
+
+            // Always convert the initial target, give +1 (2 orbs total)
+            S.orbCount[startCell.owner] -= startCell.count;
+            startCell.owner = playerIdx;
+            startCell.count = 2;
+            S.orbCount[playerIdx] += 2;
+            markDirty(dr, dc);
+
+            while (queue.length > 0) {
+                const [cr, cc] = queue.shift();
+                neighbors(cr, cc).forEach(([nr, nc]) => {
+                    const key = nr * 100 + nc;
+                    if (visited.has(key)) return;
+                    const ncell = S.grid[nr][nc];
+                    if (ncell.owner === -1 || ncell.owner === playerIdx) return;
+                    visited.add(key);
+                    queue.push([nr, nc]); // always keep spreading
+                    if (ncell.count === 1) {
+                        // Weak: convert and give +1 — becomes 2-orb Venom cell
+                        S.orbCount[ncell.owner]--;
+                        ncell.owner = playerIdx;
+                        ncell.count = 2;
+                        S.orbCount[playerIdx] += 2;
+                    } else {
+                        // Strong: drain 1 orb, keep owner
+                        S.orbCount[ncell.owner]--;
+                        ncell.count--;
                     }
+                    markDirty(nr, nc);
                 });
             }
             nrPostAbility(playerIdx);
-            renderAll();
-            nrFinishAbilityTurn(playerIdx);
+            // Explosion check — converted cells at critMass (e.g. corner cells at 2 orbs) chain immediately
+            for (const key of visited) {
+                const r2 = (key / 100) | 0, c2 = key % 100;
+                const cell = S.grid[r2][c2];
+                if (cell.owner === playerIdx && cell.count >= critMass(r2, c2))
+                    chainCandidates.add(key);
+            }
+            if (chainCandidates.size > 0) nrRunChainAfterAbility(playerIdx);
+            else { renderAll(); nrFinishAbilityTurn(playerIdx); }
             break;
         }
     }
@@ -3010,7 +3583,15 @@ function nrRunChainAfterAbility(playerIdx) {
     chainReact(mySession).then(() => {
         if (mySession !== gameSession) return;
         if (!S.over) checkEliminationsAndWin();
+        commitGainBadge(playerIdx);
+        hideCombo();
         S.animating = false;
+        if (S.over) {
+            stopPlayerTimer();
+            markAllDirty(); renderAll();
+            if (onlineMode) pushStateToFirebase();
+            return;
+        }
         nrFinishAbilityTurn(playerIdx);
     }).catch(() => {});
 }
@@ -3021,27 +3602,81 @@ async function nrFinishAbilityTurn(playerIdx) {
         if (onlineMode) await pushStateToFirebase();
         return;
     }
-    renderAll();
+    // Ability use costs your turn — advance to next player
+    let next = (S.current + 1) % PCOLORS.length;
+    let guard = 0;
+    while (S.eliminated[next] && guard++ < PCOLORS.length)
+        next = (next + 1) % PCOLORS.length;
+    if (next <= S.current) {
+        S.turn = (S.turn || 0) + 1;
+        // NOTE: frozen/surge decrements and meter bonuses are handled by advanceTurn only.
+        // nrFinishAbilityTurn must NOT also decrement them — that would double-count.
+    }
+    S.current = next;
+    if (S.nrIceWall)     S.nrIceWall[S.current]     = false;
+    if (S.nrStaticField) S.nrStaticField[S.current]  = false;
+    // Blackout: skip immediately if the next player is blacked out
+    if (nuclearMode && S.nrBlackout && S.nrBlackout[S.current]) {
+        S.nrBlackout[S.current] = false;
+        // Advance one more time
+        let skip = (S.current + 1) % PCOLORS.length, gs = 0;
+        while (S.eliminated[skip] && gs++ < PCOLORS.length) skip = (skip + 1) % PCOLORS.length;
+        // Handle round boundary
+        if (skip <= S.current) {
+            S.turn = (S.turn || 0) + 1;
+        }
+        S.current = skip;
+        if (S.nrIceWall)     S.nrIceWall[S.current]     = false;
+        if (S.nrStaticField) S.nrStaticField[S.current]  = false;
+    }
+    markAllDirty(); renderAll();
+    S.animating = false;
+    syncUndoBtn();
+    startPlayerTimer();
+    // Process ignite/frozen turn-start effects (same as handleClick does)
+    if (nuclearMode) {
+        await nrProcessTurnStartCells(gameSession);
+        if (S.over) return;
+    }
     if (onlineMode) {
-        await pushStateToFirebase();
         S.pendingMove = null;
+        if (!S.over) S.turnDeadline = serverNow() + TURN_TIMER_MS;
+        await pushStateToFirebase();
         updateOnlineInteractivity();
+    } else if (IS_AI[S.current]) {
+        scheduleAiTurn();
     } else {
-        setGridInteractive(!IS_AI[S.current]);
-        if (IS_AI[S.current]) scheduleAiTurn();
+        setGridInteractive(true);
     }
 }
 
-/* ── Turn-start: decrement frozen, process ignite auto-explosions ── */
+/* ── Turn-start: process ignite auto-explosions ── */
 async function nrProcessTurnStartCells(session) {
     if (!nuclearMode) return;
     let hasIgnite = false;
     for (let r = 0; r < cfg.rows; r++) {
         for (let c = 0; c < cfg.cols; c++) {
             const cell = S.grid[r][c];
-            // Note: frozen is decremented per full round (S.turn increment), not per player move
-            // Mark ignite candidates
-            if (cell.ignite > 0) { cell.ignite--; hasIgnite = true; chainCandidates.add(r * 100 + c); markDirty(r, c); }
+            if (cell.ignite > 0) {
+                cell.ignite--;
+                // Set spread color — use igniteOwner (Napalm) if set, otherwise current owner
+                const fireOwner = cell.igniteOwner >= 0 ? cell.igniteOwner : cell.owner;
+                cell._airstrikeOwner = fireOwner;
+                // Pre-fill to critMass so chainReact can actually explode it
+                const cm = critMass(r, c);
+                if (cell.count < cm) {
+                    // Add orbs to whoever currently "owns" the count for orbCount tracking
+                    const countOwner = cell.owner >= 0 ? cell.owner : fireOwner;
+                    S.orbCount[countOwner] += (cm - cell.count);
+                    cell.count = cm;
+                    if (cell.owner < 0) cell.owner = countOwner;
+                }
+                // Clear igniteOwner when fully consumed
+                if (cell.ignite === 0) cell.igniteOwner = -1;
+                hasIgnite = true;
+                chainCandidates.add(r * 100 + c);
+                markDirty(r, c);
+            }
         }
     }
     if (hasIgnite) {
@@ -3116,7 +3751,37 @@ async function chainReact(session) {
         if (comboCount > matchStats.maxCombo) { matchStats.maxCombo = comboCount; matchStats.maxComboPlayer = S.current; }
         // Nuclear mode: fill meter proportional to combo depth
         if (nuclearMode && S.nrMeter) {
-            S.nrMeter[S.current] = Math.min(NR_METER_MAX, (S.nrMeter[S.current] || 0) + comboCount * NR_METER_PER_COMBO);
+            // Underdog Multiplier: 1.5× if player had fewer orbs than every opponent at round start
+            const snapOrbs = _nrRoundStartOrbs.length ? _nrRoundStartOrbs : S.orbCount;
+            const mySnap = snapOrbs[S.current] || 0;
+            const isUnderdog = !S.eliminated[S.current] && S.orbCount.every((_, i) =>
+                i === S.current || S.eliminated[i] || mySnap < (snapOrbs[i] || 0));
+            const multiplier = isUnderdog ? 1.5 : 1;
+            const gain = Math.round(comboCount * NR_METER_PER_COMBO * multiplier);
+            S.nrMeter[S.current] = Math.min(NR_METER_MAX, (S.nrMeter[S.current] || 0) + gain);
+        }
+        // Passive Surge: if active (counter > 0) and 5+ chain, Voltage gets a free extra turn
+        if (nuclearMode && comboCount === 5) {
+            const charIdx = ALL_COLORS.indexOf(PCOLORS[S.current]);
+            if (charIdx >= 0 && NR_CHARS[charIdx].name === 'Voltage'
+                && S.nrSurge && S.nrSurge[S.current] > 0
+                && S._nrSurgeUsedThisTurn < 2) {
+                S._nrSurgeFreeThisTurn = true;
+                S._nrSurgeUsedThisTurn++; // max 2 free turns per turn
+                let surgeEl = document.getElementById('nr-surge-label');
+                if (!surgeEl) {
+                    surgeEl = document.createElement('div');
+                    surgeEl.id = 'nr-surge-label';
+                    surgeEl.className = 'nr-surge-label';
+                    document.getElementById('grid-and-combo')?.appendChild(surgeEl);
+                }
+                surgeEl.textContent = 'Surge!';
+                surgeEl.style.color = PCOLORS[S.current];
+                surgeEl.classList.remove('nr-surge-visible');
+                void surgeEl.offsetWidth;
+                surgeEl.classList.add('nr-surge-visible');
+                setTimeout(() => surgeEl.classList.remove('nr-surge-visible'), 1800);
+            }
         }
 
         unstable.forEach(([r, c]) => {
@@ -3142,14 +3807,13 @@ async function chainReact(session) {
 
         unstable.forEach(([r, c]) => {
             const cell = S.grid[r][c], cm = critMass(r, c);
-            // Airstrike overrides spread color; Infect hijacks it; otherwise use cell owner
-            const spreadOwner = (nuclearMode && cell._airstrikeOwner != null)
+            // Airstrike overrides spread color; Infect hijacks it
+            let spreadOwner = (nuclearMode && cell._airstrikeOwner != null)
                 ? cell._airstrikeOwner
                 : (nuclearMode && cell.infect >= 0) ? cell.infect : cell.owner;
             cell._airstrikeOwner = null; // consume
             cell.infect = -1; // consume
             const owner = cell.owner;
-            // Cryo Absolute Zero: _cryoFrozen cells leave 1 orb in center for spreadOwner
             // _cryoFrozen: when this cell explodes, leave 1 orb for spreadOwner instead of emptying
             const leaveCryo = nuclearMode && cell._cryoFrozen;
             cell._cryoFrozen = false;
@@ -3161,7 +3825,9 @@ async function chainReact(session) {
             } else if (cell.count <= 0) { cell.count = 0; cell.owner = -1; }
             else if (cell.count >= critMass(r, c)) chainCandidates.add(r * 100 + c);
             markDirty(r, c);
-            neighbors(r, c).forEach(([nr, nc]) => {
+
+            const allNeighbors = neighbors(r, c);
+            allNeighbors.forEach(([nr, nc]) => {
                 const ncell = S.grid[nr][nc];
                 // Frozen cells block incoming orbs — EXCEPT when Cryo's own chain reaches
                 // a _cryoFrozen cell they placed: receive the orb normally, lift the freeze
@@ -3175,8 +3841,34 @@ async function chainReact(session) {
                         return; // all other frozen cells still block
                     }
                 }
+                // Static Field: incoming orbs into Voltage's cells are absorbed without converting
+                if (nuclearMode && S.nrStaticField && ncell.owner !== -1 && ncell.owner !== spreadOwner && S.nrStaticField[ncell.owner]) {
+                    // Orb lands but ownership doesn't change — absorbed silently
+                    ncell.count++; S.orbCount[ncell.owner]++;
+                    markDirty(nr, nc);
+                    if (ncell.count >= critMass(nr, nc)) chainCandidates.add(nr * 100 + nc);
+                    const nel = cellEl(nr, nc);
+                    if (nel) { nel.classList.remove('ping'); nel.classList.add('ping'); }
+                    return;
+                }
+                // Ember (Napalm): if an enemy chain tries to convert an Ember-marked own cell,
+                // it explodes in the owner's color instead of converting — backdraft is NOT
+                // consumed here so it fires for every hit this round; it clears at round end.
+                if (nuclearMode && ncell.backdraft >= 0 && ncell.backdraft === ncell.owner && ncell.owner !== spreadOwner) {
+                    // Detonate in place — consume the mark so it fires exactly once per trigger
+                    ncell.backdraft = -1;
+                    ncell.count++;
+                    S.orbCount[ncell.owner]++;
+                    if (ncell.count >= critMass(nr, nc)) chainCandidates.add(nr * 100 + nc);
+                    markDirty(nr, nc);
+                    const nel = cellEl(nr, nc);
+                    if (nel) { nel.classList.remove('ping'); nel.classList.add('ping'); }
+                    return; // skip normal conversion
+                }
                 // Ice Wall: own cells cannot be converted
                 if (nuclearMode && S.nrIceWall && ncell.owner !== -1 && ncell.owner !== spreadOwner && S.nrIceWall[ncell.owner]) return;
+                // Ignite lock: cell is untouchable — block all incoming orbs from any source
+                if (nuclearMode && ncell.ignite > 0) return;
                 if (ncell.owner !== -1 && ncell.owner !== spreadOwner) { S.orbCount[ncell.owner] -= ncell.count; S.orbCount[spreadOwner] += ncell.count; ncell.owner = spreadOwner; }
                 else if (ncell.owner === -1) { ncell.owner = spreadOwner; }
                 ncell.count++; S.orbCount[spreadOwner]++;
@@ -3200,9 +3892,15 @@ async function chainReact(session) {
    ══════════════════════════════════════════════════════════════════ */
 function checkEliminationsAndWin() {
     if (!S.hasMoved.every(Boolean)) return false;
-    for (let i = 0; i < PCOLORS.length; i++)
-        if (!S.eliminated[i] && S.orbCount[i] <= 0)
+    for (let i = 0; i < PCOLORS.length; i++) {
+        if (!S.eliminated[i] && S.orbCount[i] <= 0) {
             S.eliminated[i] = true;
+            // Desperation Meter: distribute eliminated player's meter to survivors below the leader
+            if (nuclearMode && S.nrMeter && S.nrMeter[i] > 0) {
+                nrDistributeMeter(i);
+            }
+        }
+    }
     const survivors = S.eliminated.map((e, i) => !e ? i : -1).filter(i => i >= 0);
     if (survivors.length === 1) {
         S.over = true; markAllDirty(); renderAll(); showWin(survivors[0]); return true;
@@ -3210,9 +3908,29 @@ function checkEliminationsAndWin() {
     return false;
 }
 
-/* ══════════════════════════════════════════════════════════════════
-   UNDO / CHAT TOGGLE
-   ══════════════════════════════════════════════════════════════════ */
+/* ── Desperation Meter: distribute a eliminated player's meter to survivors below the leader ── */
+function nrDistributeMeter(eliminatedIdx) {
+    if (!S.nrMeter) return;
+    const meter = S.nrMeter[eliminatedIdx];
+    if (meter <= 0) return;
+    S.nrMeter[eliminatedIdx] = 0;
+    // Find the leader's orb count among survivors
+    const survivors = S.orbCount.filter((_, i) => !S.eliminated[i]);
+    if (!survivors.length) return;
+    const maxOrbs = Math.max(...survivors);
+    // Recipients: alive players who have fewer orbs than the leader
+    const recipients = [];
+    for (let i = 0; i < PCOLORS.length; i++) {
+        if (!S.eliminated[i] && S.orbCount[i] < maxOrbs) recipients.push(i);
+    }
+    // If everyone is tied (no one below leader) give to all survivors
+    const targets = recipients.length ? recipients : S.orbCount.map((_, i) => !S.eliminated[i] ? i : -1).filter(i => i >= 0);
+    const share = Math.floor(meter / targets.length);
+    if (share <= 0) return;
+    for (const i of targets) {
+        S.nrMeter[i] = Math.min(NR_METER_MAX, (S.nrMeter[i] || 0) + share);
+    }
+}
 function undoOrToggleChat() {
     if (onlineMode) {
         toggleChat();
@@ -3224,6 +3942,7 @@ function undoOrToggleChat() {
 
 function undoMove() {
     if (history.length === 0 || S.animating || onlineMode) return;
+    if (_nrTargeting) { nrCancelTargeting(); return; } // cancel targeting instead of undoing
     // Pop back past all consecutive AI moves so the human gets to re-decide.
     // We stop as soon as the state belongs to a human player's turn.
     do {
@@ -3421,6 +4140,17 @@ async function doOnlineRematch() {
     S.moveSeq = currentSeq; // restore sequence so serializeState increments from here
     // Reset per-player timers to full for the new game
     playerTimers = timedMode ? new Array(PCOLORS.length).fill(timedSeconds * 1000) : [];
+    // Reset Nuclear Reaction per-player state
+    if (nuclearMode && S.nrMeter) {
+        const np = PCOLORS.length;
+        S.nrMeter       = new Array(np).fill(0);
+        S.nrAbilityIdx  = new Array(np).fill(0);
+        S.nrBlackout    = new Array(np).fill(false);
+        S.nrSurge       = new Array(np).fill(0);
+        S.nrIceWall     = new Array(np).fill(false);
+        S.nrFirestorm   = new Array(np).fill(false);
+        S.nrStaticField = new Array(np).fill(false);
+    }
 
     // Close win screen
     document.getElementById('win-overlay').classList.remove('show');
@@ -3523,6 +4253,15 @@ function goSetup() {
     releaseWakeLock();
     stopPlayerTimer();
     nrExitTargeting();
+    // Fully clear surge label
+    const surgeLabel = document.getElementById('nr-surge-label');
+    if (surgeLabel) {
+        surgeLabel.classList.remove('nr-surge-visible');
+        surgeLabel.textContent = '';
+    }
+    nuclearMode = false;
+    const nmToggle = document.getElementById('nuclear-mode-toggle');
+    if (nmToggle) nmToggle.classList.remove('on');
     history = [];
     hideCombo(true);
     ballModes.fill(0);

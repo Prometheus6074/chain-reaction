@@ -2509,53 +2509,382 @@ body.skin-numbered .orb-count-badge {
     pointer-events: none;
 }
 
-/* ── Infect mark on cell ── */
-.cell .nr-infect-dot {
+.cell.nr-frozen {
+    filter: brightness(0.55) hue-rotate(160deg);
+}
+.cell.nr-frozen::after {
+    content: '';
     position: absolute;
-    top: 3px;
-    right: 3px;
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: #aaff33;
-    box-shadow: 0 0 4px #aaff33;
+    inset: 0;
+    background: rgba(0,200,255,0.15);
+    border-radius: inherit;
     pointer-events: none;
 }
 
-/* ── Backdraft mark ── */
-.cell .nr-backdraft-dot {
+/* ── Shared NR status badge style ── */
+.cell .nr-badge {
     position: absolute;
     top: 3px;
-    left: 3px;
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: #ff6633;
-    box-shadow: 0 0 4px #ff6633;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 1px 4px;
+    border-radius: 3px;
     pointer-events: none;
+    white-space: nowrap;
+    line-height: 1.4;
+    z-index: 4;
 }
 
-/* ── Ignite timer dot ── */
-.cell .nr-ignite-dot {
-    position: absolute;
+/* FRZ badge */
+.cell .nr-badge-frozen {
+    background: rgba(0,180,220,0.22);
+    color: #00ddff;
+    border: 1px solid rgba(0,220,255,0.5);
+    animation: nr-freeze-pulse 1.6s ease-in-out infinite;
+}
+@keyframes nr-freeze-pulse {
+    0%, 100% { opacity: 0.85; }
+    50%       { opacity: 1;    }
+}
+
+/* NFCT badge */
+.cell .nr-badge-infect {
+    background: rgba(170,255,51,0.18);
+    color: #aaff33;
+    border: 1px solid rgba(170,255,51,0.45);
+    animation: nr-infect-pulse 1.2s ease-in-out infinite;
+}
+@keyframes nr-infect-pulse {
+    0%, 100% { opacity: 0.8; transform: translateX(-50%) scale(1); }
+    50%       { opacity: 1;   transform: translateX(-50%) scale(1.05); }
+}
+
+/* EMBR badge */
+.cell .nr-badge-ember {
+    background: rgba(255,102,51,0.2);
+    color: #ff6633;
+    border: 1px solid rgba(255,102,51,0.5);
+    animation: nr-ember-flicker 0.9s ease-in-out infinite;
+}
+@keyframes nr-ember-flicker {
+    0%, 100% { opacity: 1;   }
+    40%       { opacity: 0.6; }
+    70%       { opacity: 0.9; }
+}
+
+/* IGN badge */
+.cell .nr-badge-ignite {
+    background: rgba(255,102,51,0.25);
+    color: #ff6633;
+    border: 1px solid rgba(255,102,51,0.6);
     bottom: 3px;
-    right: 3px;
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: #ff6633;
-    box-shadow: 0 0 6px #ff6633cc;
-    animation: nr-ignite-blink 0.6s ease-in-out infinite;
-    pointer-events: none;
+    top: auto;
+    animation: nr-ignite-blink 0.5s ease-in-out infinite;
 }
 @keyframes nr-ignite-blink {
-    0%, 100% { opacity: 1; }
-    50%       { opacity: 0.2; }
+    0%, 100% { opacity: 1;   box-shadow: 0 0 4px #ff663388; }
+    50%       { opacity: 0.3; box-shadow: none; }
 }
 
-/* Void Rift 2x2 hover preview */
+/* Void Rift hover preview */
 .cell.nr-void-preview {
     outline: 2px solid #cc44ff;
     outline-offset: -2px;
     background: rgba(204, 68, 255, 0.18);
 }
+
+/* Overgrowth 3×3 hover preview */
+.cell.nr-overgrowth-preview {
+    outline: 2px solid #1fd97a;
+    outline-offset: -2px;
+    background: rgba(31, 217, 122, 0.18);
+}
+
+/* Ember hover preview */
+.cell.nr-ember-preview {
+    outline: 2px solid #ff6633;
+    outline-offset: -2px;
+    background: rgba(255, 102, 51, 0.18);
+}
+
+/* Corrode 2×2 hover preview */
+.cell.nr-corrode-preview {
+    outline: 2px solid #aaff33;
+    outline-offset: -2px;
+    background: rgba(170, 255, 51, 0.18);
+}
+
+/* Carpet Bomb row hover preview */
+.cell.nr-row-preview {
+    outline: 2px solid #ff3355;
+    outline-offset: -2px;
+    background: rgba(255, 51, 85, 0.18);
+}
+
+/* Tidal Wave column hover preview */
+.cell.nr-col-preview {
+    outline: 2px solid #2a7fff;
+    outline-offset: -2px;
+    background: rgba(42, 127, 255, 0.18);
+}
+
+/* ── Ability flash overlays ── */
+/* Row sweep (Carpet Bomb) */
+.cell.nr-row-flash {
+    animation: nr-row-flash 0.55s ease-out forwards;
+}
+@keyframes nr-row-flash {
+    0%   { background: rgba(255,51,85,0.55); }
+    100% { background: transparent; }
+}
+
+/* Column sweep (Tidal Wave) */
+.cell.nr-col-flash {
+    animation: nr-col-flash 0.55s ease-out forwards;
+}
+@keyframes nr-col-flash {
+    0%   { background: rgba(42,127,255,0.55); }
+    100% { background: transparent; }
+}
+
+/* Airstrike target crosshair */
+.cell.nr-airstrike-target {
+    animation: nr-airstrike 0.6s ease-out forwards;
+}
+@keyframes nr-airstrike {
+    0%   { outline: 2px solid #ff3355; outline-offset: -2px; background: rgba(255,51,85,0.4); }
+    60%  { outline: 2px solid #ff3355; outline-offset: 6px;  background: rgba(255,51,85,0.1); }
+    100% { outline: none; background: transparent; }
+}
+
+/* Detonation Wave near-crit flash */
+.cell.nr-detwave-flash {
+    animation: nr-detwave 0.5s ease-out forwards;
+}
+@keyframes nr-detwave {
+    0%   { background: rgba(255,51,85,0.6); transform: scale(1.08); }
+    100% { background: transparent; transform: scale(1); }
+}
+
+/* Creep claim flash */
+.cell.nr-creep-claim {
+    animation: nr-creep 0.45s ease-out forwards;
+}
+@keyframes nr-creep {
+    0%   { background: rgba(31,217,122,0.6); }
+    100% { background: transparent; }
+}
+
+/* Overgrowth radial bloom */
+.cell.nr-overgrowth-bloom {
+    animation: nr-bloom 0.5s ease-out forwards;
+}
+@keyframes nr-bloom {
+    0%   { background: rgba(31,217,122,0.5); transform: scale(1.1); }
+    100% { background: transparent; transform: scale(1); }
+}
+
+/* Pandemic enemy drain */
+.cell.nr-pandemic-drain {
+    animation: nr-pandemic 0.5s ease-out forwards;
+}
+@keyframes nr-pandemic {
+    0%   { background: rgba(31,217,122,0.4); filter: brightness(0.6); }
+    100% { background: transparent; filter: none; }
+}
+
+/* Permafrost freeze */
+.cell.nr-permafrost-hit {
+    animation: nr-permafrost 0.6s ease-out forwards;
+}
+@keyframes nr-permafrost {
+    0%   { background: rgba(0,221,255,0.65); transform: scale(1.05); }
+    60%  { background: rgba(0,221,255,0.25); }
+    100% { background: transparent; transform: scale(1); }
+}
+
+/* Ice Wall shield shimmer */
+.cell.nr-icewall-shimmer {
+    animation: nr-icewall 0.5s ease-out forwards;
+}
+@keyframes nr-icewall {
+    0%   { outline: 2px solid #00ddff; outline-offset: -2px; background: rgba(0,221,255,0.3); }
+    100% { outline: none; background: transparent; }
+}
+
+/* Absolute Zero board freeze */
+.cell.nr-absz-flash {
+    animation: nr-absz 0.7s ease-out forwards;
+}
+@keyframes nr-absz {
+    0%   { background: rgba(0,180,255,0.6); filter: brightness(0.5) hue-rotate(160deg); }
+    100% { background: transparent; filter: none; }
+}
+
+/* Void Rift erase */
+.cell.nr-voidrift-erase {
+    animation: nr-voidrift 0.5s ease-out forwards;
+}
+@keyframes nr-voidrift {
+    0%   { background: rgba(204,68,255,0.6); transform: scale(0.85); }
+    100% { background: transparent; transform: scale(1); }
+}
+
+/* Void Rift self boost */
+.cell.nr-voidrift-boost {
+    animation: nr-voidrift-boost 0.5s ease-out forwards;
+}
+@keyframes nr-voidrift-boost {
+    0%   { background: rgba(204,68,255,0.45); transform: scale(1.1); }
+    100% { background: transparent; transform: scale(1); }
+}
+
+/* Phantom Step ghost trail on source */
+.cell.nr-phantom-src {
+    animation: nr-phantom-src 0.4s ease-out forwards;
+}
+@keyframes nr-phantom-src {
+    0%   { opacity: 1; }
+    100% { opacity: 0.15; background: rgba(204,68,255,0.2); }
+}
+
+/* Phantom Step land on dest */
+.cell.nr-phantom-dst {
+    animation: nr-phantom-dst 0.45s ease-out forwards;
+}
+@keyframes nr-phantom-dst {
+    0%   { background: rgba(204,68,255,0.7); transform: scale(0.7); }
+    100% { background: transparent; transform: scale(1); }
+}
+
+/* Swap flash */
+.cell.nr-swap-flash {
+    animation: nr-swap 0.45s ease-out forwards;
+}
+@keyframes nr-swap {
+    0%   { background: rgba(204,68,255,0.55); transform: scale(1.08); }
+    100% { background: transparent; transform: scale(1); }
+}
+
+/* Ignite target mark flash */
+.cell.nr-ignite-mark {
+    animation: nr-ignite-mark 0.5s ease-out forwards;
+}
+@keyframes nr-ignite-mark {
+    0%   { background: rgba(255,102,51,0.65); transform: scale(1.1); }
+    50%  { background: rgba(255,102,51,0.35); }
+    100% { background: transparent; transform: scale(1); }
+}
+
+/* Ember mark flash */
+.cell.nr-ember-mark {
+    animation: nr-ember-mark 0.5s ease-out forwards;
+}
+@keyframes nr-ember-mark {
+    0%   { outline: 2px solid #ff6633; outline-offset: -2px; background: rgba(255,102,51,0.35); }
+    100% { outline: none; background: transparent; }
+}
+
+/* Encircle convert */
+.cell.nr-encircle-hit {
+    animation: nr-encircle 0.55s ease-out forwards;
+}
+@keyframes nr-encircle {
+    0%   { background: rgba(255,102,51,0.6); transform: scale(1.12); }
+    100% { background: transparent; transform: scale(1); }
+}
+
+/* Blackout target card flash */
+.pcard.nr-blackout-hit {
+    animation: nr-blackout 0.6s ease-out forwards;
+}
+@keyframes nr-blackout {
+    0%   { filter: brightness(0.2); }
+    40%  { filter: brightness(0.05); }
+    100% { filter: none; }
+}
+
+/* Static Field shield on own cells */
+.cell.nr-staticfield-shield {
+    animation: nr-staticfield 0.5s ease-out forwards;
+}
+@keyframes nr-staticfield {
+    0%   { outline: 2px solid #ffcc00; outline-offset: -2px; background: rgba(255,204,0,0.3); }
+    100% { outline: none; background: transparent; }
+}
+
+/* Surge activation lightning on card */
+.pcard.nr-surge-activate {
+    animation: nr-surge-card 0.6s ease-out forwards;
+}
+@keyframes nr-surge-card {
+    0%   { filter: brightness(2.5); }
+    40%  { filter: brightness(1.4); }
+    100% { filter: none; }
+}
+
+/* Corrode target */
+.cell.nr-corrode-hit {
+    animation: nr-corrode 0.5s ease-out forwards;
+}
+@keyframes nr-corrode {
+    0%   { background: rgba(170,255,51,0.55); transform: scale(0.92); }
+    100% { background: transparent; transform: scale(1); }
+}
+
+/* Decay target + neighbors */
+.cell.nr-decay-hit {
+    animation: nr-decay 0.55s ease-out forwards;
+}
+@keyframes nr-decay {
+    0%   { background: rgba(170,255,51,0.5); filter: brightness(0.65); }
+    100% { background: transparent; filter: none; }
+}
+
+/* Undertow transfer */
+.cell.nr-undertow-drain {
+    animation: nr-undertow-drain 0.45s ease-out forwards;
+}
+@keyframes nr-undertow-drain {
+    0%   { background: rgba(42,127,255,0.5); transform: scale(0.9); }
+    100% { background: transparent; transform: scale(1); }
+}
+.cell.nr-undertow-gain {
+    animation: nr-undertow-gain 0.45s ease-out forwards;
+}
+@keyframes nr-undertow-gain {
+    0%   { background: rgba(42,127,255,0.5); transform: scale(1.1); }
+    100% { background: transparent; transform: scale(1); }
+}
+
+/* Riptide edge convert */
+.cell.nr-riptide-flash {
+    animation: nr-riptide 0.5s ease-out forwards;
+}
+@keyframes nr-riptide {
+    0%   { background: rgba(42,127,255,0.6); transform: scale(1.06); }
+    100% { background: transparent; transform: scale(1); }
+}
+
+/* Infect mark */
+.cell.nr-infect-mark-flash {
+    animation: nr-infect-mark 0.5s ease-out forwards;
+}
+@keyframes nr-infect-mark {
+    0%   { outline: 2px solid #aaff33; outline-offset: -2px; background: rgba(170,255,51,0.3); }
+    100% { outline: none; background: transparent; }
+}
+
+/* Surge free-turn extra turn conversion glow on grid */
+#grid.nr-surge-glow {
+    animation: nr-surge-glow 0.8s ease-out forwards;
+}
+@keyframes nr-surge-glow {
+    0%   { outline: 3px solid #ffcc00; outline-offset: 2px; }
+    100% { outline: none; }
+}
+
