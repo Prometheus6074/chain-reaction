@@ -739,6 +739,7 @@ input, textarea, select,
     padding: 20px 10px 20px;
     gap: 6px;
     min-height: 100vh;
+    position: relative;
 }
 
 #pstrip {
@@ -2888,3 +2889,20 @@ body.skin-numbered .orb-count-badge {
     100% { outline: none; }
 }
 
+
+/* Blackout: darkness overlay sweeps the game area */
+.nr-blackout-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0);
+    pointer-events: none;
+    z-index: 30;
+    border-radius: inherit;
+    animation: nr-blackout-sweep 0.7s ease-out forwards;
+}
+@keyframes nr-blackout-sweep {
+    0%   { background: rgba(0, 0, 0, 0); }
+    25%  { background: rgba(0, 0, 0, 0.65); }
+    60%  { background: rgba(0, 0, 0, 0.45); }
+    100% { background: rgba(0, 0, 0, 0); }
+}
