@@ -133,6 +133,7 @@ let onlineRoomPassword = '';
 let myUsername = sessionStorage.getItem('cr_username') || localStorage.getItem('cr_username') || '';
 let _onlineTurnTimerInterval = null;
 let _nrRoundStartOrbs = []; // snapshot of orbCounts at the start of each round for underdog check
+let _pendingStateSnap = null; // queued state update received while animating
 const TURN_TIMER_MS = 30000; // 30 seconds per turn
 
 /* ── Firebase init (lazy) ── */
@@ -684,7 +685,11 @@ async function onlineStartGame() {
     await roomRef.child('config/playerNames').set(PNAMES);
 
     // Push initial state then flip status to 'playing'
-    await roomRef.child('state').set(serializeState(S));
+    // IMPORTANT: capture moveSeq back onto S so P1's first move gets seq=2,
+    // not seq=1 which P2 would discard as "already seen".
+    const initialState = serializeState(S);
+    S.moveSeq = initialState.moveSeq;
+    await roomRef.child('state').set(initialState);
     await roomRef.child('status').set('playing');
 }
 
@@ -1050,13 +1055,14 @@ function launchOnlineGame(room) {
     // Listen for state changes (other players' moves)
     const stateRef = roomRef.child('state');
     const stateListener = stateRef.on('value', snap => {
-        if (!snap.exists()) return;
+        // Skip if animating — playRemoteMove reconciles to final state at the end anyway
+        if (!snap.exists() || S.animating) return;
         const data = snap.val();
         if (!data) return;
         const seq = data.moveSeq ?? 0;
+
         // Rematch: host flagged this push with rematch:true
         if (data.rematch && data.writerUid !== myUid) {
-            _pendingStateSnap = null;
             lastSeenMoveSeq = seq;
             closeRematchOverlay();
             document.getElementById('win-overlay').classList.remove('show');
@@ -1064,6 +1070,7 @@ function launchOnlineGame(room) {
             window._playerDisconnectedThisGame = false;
             history = [];
             resetMatchStats();
+            if (_nrTargeting) nrExitTargeting();
             S = deserializeState(data);
             buildGridDOM();
             buildPlayerStrip();
@@ -1074,21 +1081,16 @@ function launchOnlineGame(room) {
             updateOnlineInteractivity();
             return;
         }
+
         if (seq <= lastSeenMoveSeq) return;
-        // Skip our own echo — we already animated locally
-        if (data.writerUid === myUid) { lastSeenMoveSeq = seq; return; }
+        lastSeenMoveSeq = seq; // always update before any early return
+        if (data.writerUid === myUid) return; // skip own echo
 
-        // If a move animation is in progress, queue state-only updates for later;
-        // move updates can be dropped since they carry their own animation
-        if (S.animating) {
-            if (!data.move || data.move.r == null) _pendingStateSnap = { data, seq };
-            return;
-        }
-
-        lastSeenMoveSeq = seq;
         if (data.move && data.move.r != null && data.move.c != null) {
             playRemoteMove(data.move.r, data.move.c, data);
         } else {
+            // State-only update (NR ability, blackout skip, timer elimination, etc.)
+            if (_nrTargeting) nrExitTargeting();
             S = deserializeState(data);
             markAllDirty(); renderAll();
             if (S.over) {
@@ -1226,6 +1228,10 @@ function stopOnlineTurnTimer() {
 function _forceOnlineMove() {
     if (!onlineMode || !S || S.over || S.animating || S.current !== myPlayerIndex) return;
 
+    // Cancel any active NR targeting before forcing a move — otherwise handleClick
+    // would route the random cell through nrHandleCellTarget which would fail validation.
+    if (_nrTargeting) nrCancelTargeting();
+
     // Collect cells we own first; fall back to empty cells if we own nothing.
     // Pick randomly — idling should be a punishment, not a free optimal move.
     const owned = [];
@@ -1246,7 +1252,7 @@ function _forceOnlineMove() {
     if (roomRef) {
         roomRef.child('chat').push({
             system: true,
-            text: `⏱ ${PNAMES[myPlayerIndex]} ran out of time — move was forced!`
+            text: `${PNAMES[myPlayerIndex]} ran out of time — move was forced.`
         }).catch(() => {});
     }
 
@@ -2287,36 +2293,28 @@ async function playRemoteMove(r, c, finalData) {
         await chainReact(mySession);
     } catch (e) { return; }
 
-    if (mySession !== gameSession) return;
+    if (mySession !== gameSession) {
+        if (onlineMode) { S.animating = false; updateOnlineInteractivity(); }
+        return;
+    }
     if (!S.over) checkEliminationsAndWin();
 
     commitGainBadge(S.current);
     hideCombo();
 
-    // Reconcile to authoritative final state (fixes any drift)
-    const authoritative = deserializeState(finalData);
-    S = authoritative;
+    // Reconcile to authoritative final state (fixes any local drift)
+    S = deserializeState(finalData);
 
     markAllDirty(); renderAll();
     S.animating = false;
-    // Apply any state-only update (e.g. timer elimination) that arrived during animation
-    if (_pendingStateSnap) {
-        const pending = _pendingStateSnap;
-        _pendingStateSnap = null;
-        S = deserializeState(pending.data);
-        markAllDirty(); renderAll();
-        if (S.over) {
-            const winner = S.eliminated.findIndex(e => !e);
-            if (winner !== -1) showWin(winner);
-            stopPlayerTimer();
-        } else {
-            startPlayerTimer();
-        }
-        updateOnlineInteractivity();
+    if (S.over) {
+        const winner = S.eliminated.findIndex(e => !e);
+        if (winner !== -1) showWin(winner);
+        stopPlayerTimer();
     } else {
         startPlayerTimer();
-        updateOnlineInteractivity();
     }
+    updateOnlineInteractivity();
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2364,7 +2362,10 @@ async function handleClick(r, c) {
         await chainReact(mySession);
     } catch (e) { return; } // session ended — stop silently
 
-    if (mySession !== gameSession) return;
+    if (mySession !== gameSession) {
+        if (onlineMode) { S.animating = false; updateOnlineInteractivity(); }
+        return;
+    }
     if (!S.over) checkEliminationsAndWin();
 
     commitGainBadge(S.current);
@@ -3925,6 +3926,12 @@ function nrHandlePlayerTarget(targetIdx) {
 
 /* ── Execute ability ── */
 function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
+    // Save state before every ability so undo can restore it.
+    // (Normal moves push via handleClick; abilities intercept before that push, so we do it here.)
+    if (!onlineMode) {
+        history.push(cloneState());
+        syncUndoBtn();
+    }
     // Centralized pre-ability animations
     if (nuclearMode) nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget);
     switch (abilId) {
@@ -4179,6 +4186,8 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
             checkEliminationsAndWin();
             markAllDirty(); renderAll();
             if (onlineMode) {
+                S.pendingMove = null;
+                if (!S.over) S.turnDeadline = serverNow() + TURN_TIMER_MS;
                 pushStateToFirebase();
                 updateOnlineInteractivity();
             } else if (IS_AI[playerIdx]) {
@@ -4209,6 +4218,8 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
             S._nrSurgeUsedThisTurn++;
             markAllDirty(); renderAll();
             if (onlineMode) {
+                S.pendingMove = null;
+                if (!S.over) S.turnDeadline = serverNow() + TURN_TIMER_MS;
                 pushStateToFirebase();
                 updateOnlineInteractivity();
             } else if (IS_AI[playerIdx]) {
@@ -4530,7 +4541,11 @@ function nrRunChainAfterAbility(playerIdx) {
     hideCombo(true);
     setGridInteractive(false);
     chainReact(mySession).then(() => {
-        if (mySession !== gameSession) return;
+        if (mySession !== gameSession) {
+            S.animating = false;
+            if (onlineMode) updateOnlineInteractivity();
+            return;
+        }
         if (!S.over) checkEliminationsAndWin();
         commitGainBadge(playerIdx);
         hideCombo();
@@ -4542,7 +4557,12 @@ function nrRunChainAfterAbility(playerIdx) {
             return;
         }
         nrFinishAbilityTurn(playerIdx);
-    }).catch(() => {});
+    }).catch(() => {
+        // Chain was interrupted — unblock UI
+        S.animating = false;
+        if (onlineMode) updateOnlineInteractivity();
+        else setGridInteractive(true);
+    });
 }
 
 /* ── After ability completes: push state + hand back control ── */
@@ -4582,11 +4602,9 @@ async function nrFinishAbilityTurn(playerIdx) {
     S.animating = false;
     syncUndoBtn();
     startPlayerTimer();
-    // Process ignite/frozen turn-start effects (same as handleClick does)
-    if (nuclearMode) {
-        await nrProcessTurnStartCells(gameSession);
-        if (S.over) return;
-    }
+    // NOTE: nrProcessTurnStartCells (ignite/frozen) is intentionally NOT called here.
+    // Ignite fires at the start of the next player's turn via handleClick, giving a full
+    // turn of delay — calling it here would fire ignite immediately after the ability.
     if (onlineMode) {
         S.pendingMove = null;
         if (!S.over) S.turnDeadline = serverNow() + TURN_TIMER_MS;
@@ -4893,7 +4911,9 @@ function undoOrToggleChat() {
 
 function undoMove() {
     if (history.length === 0 || S.animating || onlineMode) return;
-    if (_nrTargeting) { nrCancelTargeting(); return; } // cancel targeting instead of undoing
+    // If in NR targeting mode, exit targeting then undo the ability that started it
+    // (the ability pushed to history just before entering targeting).
+    if (_nrTargeting) nrExitTargeting();
     // Pop back past all consecutive AI moves so the human gets to re-decide.
     // We stop as soon as the state belongs to a human player's turn.
     do {
