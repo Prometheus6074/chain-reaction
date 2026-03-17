@@ -5586,3 +5586,790 @@ window.addEventListener('resize', () => {
         }
     }, 200);
 });
+
+/* ══════════════════════════════════════════════════════════════════
+   NUCLEAR REACTION — ROSTER
+   Wrapped in an IIFE to keep all names private (no collision with
+   ORB_POS, N, p, e, etc. in chain-reaction.js).
+   All DOM queries are deferred to DOMContentLoaded so this script
+   can be loaded at any point without elements being null.
+   Only window.toggleRoster is exported for HTML onclick attributes.
+   ══════════════════════════════════════════════════════════════════ */
+(function () {
+    'use strict';
+
+    /* ══════════════════════
+       ROSTER DATA
+    ══════════════════════ */
+    const CHARS = [
+        { name: 'Warhead', color: '#ff3355', label: 'Red', abilities: [
+            { id: 'carpet_bomb',     name: 'Carpet Bomb',     desc: 'Destroys 1 orb from every enemy cell in a chosen row' },
+            { id: 'airstrike',       name: 'Airstrike',       desc: 'Forces any cell to explode immediately in your colour' },
+            { id: 'detonation_wave', name: 'Detonation Wave', desc: 'Removes 1 orb from every near-critical enemy cell; converts survivors to your colour' },
+        ]},
+        { name: 'Tsunami', color: '#2a7fff', label: 'Blue', abilities: [
+            { id: 'undertow',   name: 'Undertow',   desc: 'Drains 1 orb from each enemy cell adjacent to yours and transfers it to your side' },
+            { id: 'tidal_wave', name: 'Tidal Wave', desc: 'Converts all 1–2 orb enemy cells in a chosen column to your colour' },
+            { id: 'riptide',    name: 'Riptide',    desc: 'Any edge (row or column) that contains at least one of your cells is fully claimed — every cell on that entire edge converts, including corners shared with other triggered edges' },
+        ]},
+        { name: 'Blight', color: '#1fd97a', label: 'Green', abilities: [
+            { id: 'overgrowth', name: 'Overgrowth', desc: 'In a 3×3 area: claims empty cells and buffs your own below critical (requires your cell inside)' },
+            { id: 'creep',      name: 'Creep',      desc: 'Claims all empty and 1-orb enemy cells adjacent to your cells' },
+            { id: 'pandemic',   name: 'Pandemic',   desc: 'All enemies lose 1 orb; all your safe cells gain 1. Static Field owners absorb it as +1 instead' },
+        ]},
+        { name: 'Voltage', color: '#ffcc00', label: 'Yellow', abilities: [
+            { id: 'surge',        name: 'Surge',        desc: 'Passive for 3 rounds: a 5+ chain grants a free extra turn (up to 2 per turn). Does not cost your turn' },
+            { id: 'static_field', name: 'Static Field', desc: 'Your cells are immune to enemy chain capture this turn. Also absorbs Pandemic as +1 gain' },
+            { id: 'blackout',     name: 'Blackout',     desc: "Skips a chosen opponent's next turn, activates Surge for 3 rounds, and grants you an immediate extra turn" },
+        ]},
+        { name: 'Phantom', color: '#cc44ff', label: 'Purple', abilities: [
+            { id: 'phantom_step', name: 'Phantom Step', desc: 'Teleports one of your cells to any empty cell on the board; triggers explosion check at destination' },
+            { id: 'swap',         name: 'Swap',         desc: 'Swaps the contents of any two cells on the board; triggers explosion checks on both' },
+            { id: 'void_rift',    name: 'Void Rift',    desc: '2×2 area: erases all enemy orbs and adds +2 to each of your cells inside; triggers explosion check' },
+        ]},
+        { name: 'Cryo', color: '#00ddff', label: 'Cyan', abilities: [
+            { id: 'permafrost',    name: 'Permafrost',    desc: 'Freezes a target enemy cell and all its neighbours for 2 rounds. Your chains thaw and detonate them in your colour' },
+            { id: 'ice_wall',      name: 'Ice Wall',      desc: 'Your cells cannot be converted by enemy chains until your next turn' },
+            { id: 'absolute_zero', name: 'Absolute Zero', desc: "Freezes every near-critical enemy cell for 3 rounds. When the freeze expires each cell shatters in Cryo's colour" },
+        ]},
+        { name: 'Napalm', color: '#ff6633', label: 'Orange', abilities: [
+            { id: 'ignite',   name: 'Ignite',   desc: 'Marks a cell to auto-explode in your colour: 2 rounds for your own, 1 round for enemy. Enemy chains detonate it immediately' },
+            { id: 'ember',    name: 'Ember',    desc: 'Marks a 2×2 area of your cells as traps; each repels the next enemy chain that hits it, then the mark is consumed' },
+            { id: 'encircle', name: 'Encircle', desc: 'Scans all 8 directions. 4+ Napalm neighbours: convert + ignite 2 turns. 3: ignite 1 turn. 2: lose 2 orbs. 1: lose 1 orb. 0: untouched' },
+        ]},
+        { name: 'Venom', color: '#aaff33', label: 'Lime', abilities: [
+            { id: 'corrode', name: 'Corrode', desc: 'Reduces every enemy cell in a 2×2 area to 1 orb' },
+            { id: 'infect',  name: 'Infect',  desc: "Marks an enemy cell; when it explodes the spread converts to your colour instead of the cell's owner" },
+            { id: 'decay',   name: 'Decay',   desc: 'Converts a target to 2 of your orbs then BFS-spreads to every connected enemy: 1-orb cells convert, others lose 1 orb. Never stops' },
+        ]},
+    ];
+
+    /* ══════════════════════
+       DEMO SCENARIOS
+       cell: [owner, count, flags]
+       owner: -1 empty  0 player  1 enemy
+       flags: 'f' frozen | 'ign' ignite | 'emb' ember
+              'inf' infect | 'sf' static_field | 'iw' ice_wall
+    ══════════════════════ */
+    const N          = [-1, 0, ''];
+    const p = (n, f = '') => [0, n, f];
+    const e = (n, f = '') => [1, n, f];
+
+    const DEMOS = {
+        carpet_bomb: {
+            note: 'All enemy cells in the highlighted row each lose 1 orb. Cells reduced to zero are cleared entirely.',
+            target: { type: 'row', r: 2 },
+            before: [
+                [N,    N,    N,    N,    N   ],
+                [N,    e(2), N,    e(1), N   ],
+                [e(1), e(2), e(3), e(1), e(2)],
+                [N,    N,    p(2), N,    N   ],
+                [N,    p(1), N,    p(1), N   ],
+            ],
+            after: [
+                [N,    N,    N,    N,    N   ],
+                [N,    e(2), N,    e(1), N   ],
+                [N,    e(1), e(2), N,    e(1)],
+                [N,    N,    p(2), N,    N   ],
+                [N,    p(1), N,    p(1), N   ],
+            ],
+        },
+        airstrike: {
+            note: 'The targeted cell is forced to explode in your colour. All four neighbours are captured and given +1 orb.',
+            target: { type: 'cell', r: 2, c: 2 },
+            before: [
+                [N, N,    N,    N,    N],
+                [N, N,    e(1), N,    N],
+                [N, e(1), e(1), e(1), N],
+                [N, N,    e(1), N,    N],
+                [N, N,    N,    N,    N],
+            ],
+            after: [
+                [N, N,    N,    N,    N],
+                [N, N,    p(2), N,    N],
+                [N, p(2), N,    p(2), N],
+                [N, N,    p(2), N,    N],
+                [N, N,    N,    N,    N],
+            ],
+        },
+        detonation_wave: {
+            note: 'Each enemy at exactly critical mass − 1 loses 1 orb and converts. Cells not at that threshold are untouched.',
+            target: null,
+            before: [
+                [e(1), N,    e(2), N,    e(1)],
+                [N,    e(3), e(2), e(3), N   ],
+                [e(2), e(2), p(2), e(2), e(2)],
+                [N,    e(3), e(2), e(3), N   ],
+                [e(1), N,    e(2), N,    e(1)],
+            ],
+            after: [
+                [N,    N,    p(1), N,    N   ],
+                [N,    p(2), e(2), p(2), N   ],
+                [p(1), e(2), p(2), e(2), p(1)],
+                [N,    p(2), e(2), p(2), N   ],
+                [N,    N,    p(1), N,    N   ],
+            ],
+        },
+        undertow: {
+            note: 'Each enemy cell adjacent to one of your cells loses 1 orb, which transfers to your adjacent cell with the fewest orbs.',
+            target: null,
+            before: [
+                [N, N,    N,    N, N],
+                [N, e(2), p(1), N, N],
+                [N, e(2), p(1), N, N],
+                [N, e(2), p(1), N, N],
+                [N, N,    N,    N, N],
+            ],
+            after: [
+                [N, N,    N,    N, N],
+                [N, e(1), p(2), N, N],
+                [N, e(1), p(2), N, N],
+                [N, e(1), p(2), N, N],
+                [N, N,    N,    N, N],
+            ],
+        },
+        tidal_wave: {
+            note: 'The highlighted column is targeted. Enemy cells with 1 or 2 orbs convert to your colour. The 3-orb cell is too strong and is left alone.',
+            target: { type: 'col', c: 2 },
+            before: [
+                [N,    N,    e(1), N,    N   ],
+                [N,    N,    e(2), N,    N   ],
+                [N,    N,    e(3), N,    N   ],
+                [N,    p(2), e(1), p(1), N   ],
+                [N,    N,    e(2), N,    N   ],
+            ],
+            after: [
+                [N,    N,    p(1), N,    N   ],
+                [N,    N,    p(2), N,    N   ],
+                [N,    N,    e(3), N,    N   ],
+                [N,    p(2), p(1), p(1), N   ],
+                [N,    N,    p(2), N,    N   ],
+            ],
+        },
+        riptide: {
+            note: 'Any edge with at least one of your cells is fully claimed — every cell on that edge converts. Here the player sits on the top row, so the entire top row is captured.',
+            target: null,
+            before: [
+                [e(1), e(2), p(1), e(1), e(1)],
+                [e(1), N,    N,    N,    e(1)],
+                [N,    N,    N,    N,    N   ],
+                [e(1), N,    N,    N,    e(1)],
+                [e(1), e(1), N,    e(1), e(1)],
+            ],
+            after: [
+                [p(1), p(2), p(1), p(1), p(1)],
+                [e(1), N,    N,    N,    e(1)],
+                [N,    N,    N,    N,    N   ],
+                [e(1), N,    N,    N,    e(1)],
+                [e(1), e(1), N,    e(1), e(1)],
+            ],
+        },
+        overgrowth: {
+            note: 'The 3×3 area around the target (highlighted) is processed: empty cells are claimed, and your own cells below near-critical gain +1 orb. Enemy cells are ignored.',
+            target: { type: 'area3', r: 2, c: 2 },
+            before: [
+                [N, N,    N,    N,    N],
+                [N, N,    e(1), N,    N],
+                [N, e(1), p(1), N,    N],
+                [N, N,    N,    p(1), N],
+                [N, N,    N,    N,    N],
+            ],
+            after: [
+                [N, N,    N,    N,    N],
+                [N, p(1), e(1), p(1), N],
+                [N, e(1), p(2), p(1), N],
+                [N, p(1), p(1), p(2), N],
+                [N, N,    N,    N,    N],
+            ],
+        },
+        creep: {
+            note: 'All empty cells and 1-orb enemy cells adjacent to your cells are claimed as yours. The 2-orb enemy cell is too strong to capture.',
+            target: null,
+            before: [
+                [N, N,    N,    N,    N],
+                [N, N,    e(1), N,    N],
+                [N, e(1), p(2), e(2), N],
+                [N, N,    e(1), N,    N],
+                [N, N,    N,    N,    N],
+            ],
+            after: [
+                [N, N,    N,    N,    N],
+                [N, N,    p(1), N,    N],
+                [N, p(1), p(2), e(2), N],
+                [N, N,    p(1), N,    N],
+                [N, N,    N,    N,    N],
+            ],
+        },
+        pandemic: {
+            note: 'Every enemy on the board loses 1 orb. Every one of your cells with room to grow gains 1 orb.',
+            target: null,
+            before: [
+                [N,    e(2), N,    e(2), N   ],
+                [e(2), e(2), e(2), e(2), e(2)],
+                [N,    e(2), p(1), e(2), N   ],
+                [e(2), e(2), e(2), e(2), e(2)],
+                [N,    e(2), N,    e(2), N   ],
+            ],
+            after: [
+                [N,    e(1), N,    e(1), N   ],
+                [e(1), e(1), e(1), e(1), e(1)],
+                [N,    e(1), p(2), e(1), N   ],
+                [e(1), e(1), e(1), e(1), e(1)],
+                [N,    e(1), N,    e(1), N   ],
+            ],
+        },
+        surge: {
+            note: 'Surge activates a passive for 3 rounds without changing the board. Any 5+ chain grants a free extra turn (up to 2 per turn). Does not cost your turn.',
+            target: null,
+            banner: 'Surge active — 3 rounds\nChain ×5 grants a free extra turn',
+            before: [
+                [N, N,    N,    N,    N],
+                [N, p(1), p(2), p(1), N],
+                [N, p(2), p(3), p(2), N],
+                [N, p(1), p(2), p(1), N],
+                [N, N,    N,    N,    N],
+            ],
+            after: null,
+        },
+        static_field: {
+            note: 'Static Field shields your cells (highlighted in gold) without changing orb counts. Enemy chains that reach them are absorbed instead of converting.',
+            target: null,
+            banner: 'Static Field active this turn\nYour cells resist all enemy chains',
+            before: [
+                [N, N,    N,    N,    N],
+                [N, e(3), e(3), e(3), N],
+                [N, e(3), p(2), p(1), N],
+                [N, N,    p(1), p(1), N],
+                [N, N,    N,    N,    N],
+            ],
+            after: [
+                [N, N,    N,             N,             N],
+                [N, e(3), e(3),          e(3),          N],
+                [N, e(3), p(2, 'sf'),    p(1, 'sf'),    N],
+                [N, N,    p(1, 'sf'),    p(1, 'sf'),    N],
+                [N, N,    N,             N,             N],
+            ],
+        },
+        blackout: {
+            note: "Target an opponent's player card. Their next turn is skipped entirely. Surge activates for 3 rounds. You immediately play another turn.",
+            target: null,
+            banner: "Opponent's next turn skipped\nSurge activated — you play again",
+            before: [
+                [N, N,    N,    N,    N],
+                [N, e(2), e(2), N,    N],
+                [N, e(2), p(2), N,    N],
+                [N, N,    p(1), p(1), N],
+                [N, N,    N,    N,    N],
+            ],
+            after: null,
+        },
+        phantom_step: {
+            note: 'The highlighted player cell (top-left) is teleported to the highlighted empty cell (bottom-right). An explosion check triggers at the destination.',
+            target: { type: 'cells', cells: [[1, 1], [3, 3]] },
+            before: [
+                [N, N,    N, N, N],
+                [N, p(2), N, N, N],
+                [N, N,    N, N, N],
+                [N, N,    N, N, N],
+                [N, N,    N, N, N],
+            ],
+            after: [
+                [N, N, N,    N, N],
+                [N, N, N,    N, N],
+                [N, N, N,    N, N],
+                [N, N, N, p(2), N],
+                [N, N, N,    N, N],
+            ],
+        },
+        swap: {
+            note: 'The two highlighted cells swap their full contents — owner and orb count both transfer. Explosion checks trigger on both cells after the swap.',
+            target: { type: 'cells', cells: [[1, 2], [3, 2]] },
+            before: [
+                [N, N, N,    N, N],
+                [N, N, p(2), N, N],
+                [N, N, N,    N, N],
+                [N, N, e(2), N, N],
+                [N, N, N,    N, N],
+            ],
+            after: [
+                [N, N, N,    N, N],
+                [N, N, e(2), N, N],
+                [N, N, N,    N, N],
+                [N, N, p(2), N, N],
+                [N, N, N,    N, N],
+            ],
+        },
+        void_rift: {
+            note: 'The 2×2 area from the anchor (highlighted) is processed: enemy cells are erased, your own cells each gain +2 orbs. Explosion checks trigger after.',
+            target: { type: 'area2', r: 2, c: 1 },
+            before: [
+                [N, N,    N,    N, N],
+                [N, N,    N,    N, N],
+                [N, e(2), p(1), N, N],
+                [N, p(1), e(2), N, N],
+                [N, N,    N,    N, N],
+            ],
+            after: [
+                [N, N,    N,    N, N],
+                [N, N,    N,    N, N],
+                [N, N,    p(3), N, N],
+                [N, p(3), N,    N, N],
+                [N, N,    N,    N, N],
+            ],
+        },
+        permafrost: {
+            note: 'The target and all its direct neighbours are frozen for 2 rounds (blue ring). Frozen cells cannot receive orbs. When your chain reaches them they thaw and detonate in your colour.',
+            target: { type: 'cell', r: 2, c: 2 },
+            before: [
+                [N, N,    N,    N,    N],
+                [N, N,    e(2), N,    N],
+                [N, e(1), e(2), e(1), N],
+                [N, N,    e(2), N,    N],
+                [N, N,    N,    N,    N],
+            ],
+            after: [
+                [N, N,          N,          N,          N],
+                [N, N,          e(2, 'f'),  N,          N],
+                [N, e(1, 'f'),  e(2, 'f'),  e(1, 'f'),  N],
+                [N, N,          e(2, 'f'),  N,          N],
+                [N, N,          N,          N,          N],
+            ],
+        },
+        ice_wall: {
+            note: 'Ice Wall does not change orb counts. Your cells (cyan ring) cannot be converted by enemy chains until your next turn.',
+            target: null,
+            banner: 'Ice Wall active this turn\nYour cells cannot be converted',
+            before: [
+                [N, N,    N,    N,    N],
+                [N, N,    e(3), N,    N],
+                [N, e(3), p(2), p(1), N],
+                [N, N,    p(1), p(1), N],
+                [N, N,    N,    N,    N],
+            ],
+            after: [
+                [N, N,    N,            N,            N],
+                [N, N,    e(3),         N,            N],
+                [N, e(3), p(2, 'iw'),   p(1, 'iw'),   N],
+                [N, N,    p(1, 'iw'),   p(1, 'iw'),   N],
+                [N, N,    N,            N,            N],
+            ],
+        },
+        absolute_zero: {
+            note: "Every enemy at exactly critical mass − 1 is frozen for 3 rounds (blue ring). When each freeze expires the cell shatters — exploding in Cryo's colour.",
+            target: null,
+            before: [
+                [e(1),      N,         e(2),      N,         e(1)     ],
+                [N,         e(3),      e(2),      e(3),      N        ],
+                [e(2),      e(2),      p(2),      e(2),      e(2)     ],
+                [N,         e(3),      e(2),      e(3),      N        ],
+                [e(1),      N,         e(2),      N,         e(1)     ],
+            ],
+            after: [
+                [e(1, 'f'), N,         e(2, 'f'), N,         e(1, 'f')],
+                [N,         e(3, 'f'), e(2),      e(3, 'f'), N        ],
+                [e(2, 'f'), e(2),      p(2),      e(2),      e(2, 'f')],
+                [N,         e(3, 'f'), e(2),      e(3, 'f'), N        ],
+                [e(1, 'f'), N,         e(2, 'f'), N,         e(1, 'f')],
+            ],
+        },
+        ignite: {
+            note: 'The targeted enemy cell is marked to auto-explode in your colour at the start of the next round (orange ring). If an enemy chain reaches it first it detonates immediately in your colour.',
+            target: { type: 'cell', r: 2, c: 2 },
+            before: [
+                [N, N,    N,    N,    N],
+                [N, N,    e(2), N,    N],
+                [N, e(2), e(2), e(2), N],
+                [N, N,    e(2), N,    N],
+                [N, N,    N,    N,    N],
+            ],
+            after: [
+                [N, N,    N,            N,    N],
+                [N, N,    e(2),         N,    N],
+                [N, e(2), e(2, 'ign'),  e(2), N],
+                [N, N,    e(2),         N,    N],
+                [N, N,    N,            N,    N],
+            ],
+        },
+        ember: {
+            note: 'Your cells in the 2×2 area (highlighted) are marked as ember traps (orange dot). The next enemy chain to hit each one is repelled; then the mark is consumed.',
+            target: { type: 'area2', r: 2, c: 2 },
+            before: [
+                [N, N, N,    N,    N],
+                [N, N, e(2), e(2), N],
+                [N, N, p(2), p(1), N],
+                [N, N, p(1), p(1), N],
+                [N, N, N,    N,    N],
+            ],
+            after: [
+                [N, N, N,            N,            N],
+                [N, N, e(2),         e(2),         N],
+                [N, N, p(2, 'emb'),  p(1, 'emb'),  N],
+                [N, N, p(1, 'emb'),  p(1, 'emb'),  N],
+                [N, N, N,            N,            N],
+            ],
+        },
+        encircle: {
+            note: 'Counts all 8 directions. (2,1) has 4 Napalm neighbours → converts + ignites 2 turns. (2,2) has 3 → ignites 1 turn, no conversion. (2,3) has 1 → loses 1 orb.',
+            target: null,
+            before: [
+                [N,    N,    N,    N,    N],
+                [N,    p(1), p(1), N,    N],
+                [p(1), e(2), e(2), e(2), N],
+                [N,    p(1), N,    N,    N],
+                [N,    N,    N,    N,    N],
+            ],
+            after: [
+                [N,    N,           N,           N,    N],
+                [N,    p(1),        p(1),        N,    N],
+                [p(1), p(2, 'ign'), e(2, 'ign'), e(1), N],
+                [N,    p(1),        N,           N,    N],
+                [N,    N,           N,           N,    N],
+            ],
+        },
+        corrode: {
+            note: 'Every enemy cell in the 2×2 area (highlighted) is reduced to exactly 1 orb. Cells already at 1 orb are unchanged.',
+            target: { type: 'area2', r: 1, c: 1 },
+            before: [
+                [N, N,    N,    N,    N],
+                [N, e(3), e(2), N,    N],
+                [N, e(2), e(3), N,    N],
+                [N, N,    N,    p(2), N],
+                [N, N,    N,    N,    N],
+            ],
+            after: [
+                [N, N,    N,    N,    N],
+                [N, e(1), e(1), N,    N],
+                [N, e(1), e(1), N,    N],
+                [N, N,    N,    p(2), N],
+                [N, N,    N,    N,    N],
+            ],
+        },
+        infect: {
+            note: "The targeted enemy cell is marked (green dot). When it next explodes — naturally or by chain — the spread converts in your colour instead of the cell's owner.",
+            target: { type: 'cell', r: 2, c: 2 },
+            before: [
+                [N, N,    N,    N,    N],
+                [N, N,    e(2), N,    N],
+                [N, e(2), e(2), e(2), N],
+                [N, N,    e(2), N,    N],
+                [N, N,    N,    N,    N],
+            ],
+            after: [
+                [N, N,    N,           N,    N],
+                [N, N,    e(2),        N,    N],
+                [N, e(2), e(2, 'inf'), e(2), N],
+                [N, N,    e(2),        N,    N],
+                [N, N,    N,           N,    N],
+            ],
+        },
+        decay: {
+            note: 'The target enemy converts to 2 of your orbs. BFS spreads to every connected enemy: 1-orb cells become 2-orb player cells, cells with 2+ lose 1 orb. The spread never stops.',
+            target: { type: 'cell', r: 2, c: 2 },
+            before: [
+                [N, N,    N,    N,    N],
+                [N, e(1), e(2), e(1), N],
+                [N, e(2), e(1), e(2), N],
+                [N, e(1), e(2), e(1), N],
+                [N, N,    N,    N,    N],
+            ],
+            after: [
+                [N, N,    N,    N,    N],
+                [N, p(2), e(1), p(2), N],
+                [N, e(1), p(2), e(1), N],
+                [N, p(2), e(1), p(2), N],
+                [N, N,    N,    N,    N],
+            ],
+        },
+    };
+
+    /* ══════════════════════
+       UTILITY
+    ══════════════════════ */
+    function hexA(c, a) {
+        const r = parseInt(c.slice(1, 3), 16);
+        const g = parseInt(c.slice(3, 5), 16);
+        const b = parseInt(c.slice(5, 7), 16);
+        return `rgba(${r},${g},${b},${a})`;
+    }
+
+    /* Scoped orb positions — avoids collision with ORB_POS in chain-reaction.js */
+    const ROSTER_ORB_POS = [
+        null,
+        [[0, 0]],
+        [[-22, -13], [22, 13]],
+        [[-18, -23], [22, -4], [-7, 26]],
+    ];
+
+    function isHL(r, c, t) {
+        if (!t) return false;
+        if (t.type === 'row')   return r === t.r;
+        if (t.type === 'col')   return c === t.c;
+        if (t.type === 'cell')  return r === t.r && c === t.c;
+        if (t.type === 'area2') return (r === t.r || r === t.r + 1) && (c === t.c || c === t.c + 1);
+        if (t.type === 'area3') return Math.abs(r - t.r) <= 1 && Math.abs(c - t.c) <= 1;
+        if (t.type === 'cells') return t.cells.some(([tr, tc]) => tr === r && tc === c);
+        return false;
+    }
+
+    /* ══════════════════════
+       DEMO MODAL STATE
+       Declared here so all inner functions share it.
+    ══════════════════════ */
+    let _id        = null;
+    let _color     = null;
+    let _demo      = null;
+    let _activated = false;
+
+    /* ══════════════════════
+       BUILD ROSTER
+    ══════════════════════ */
+    function buildRoster() {
+        const rosterEl = document.getElementById('roster');
+        const legendEl = document.getElementById('legend');
+        if (!rosterEl || !legendEl) return;
+
+        CHARS.forEach((char, ci) => {
+            const card = document.createElement('article');
+            card.className = 'char-card';
+            card.style.setProperty('--accent', char.color);
+            card.style.setProperty('--accent-10', hexA(char.color, 0.06));
+            card.style.animationDelay = `${ci * 55}ms`;
+
+            card.innerHTML = `
+                <div class="card-header">
+                    <div class="color-pip" style="background:${char.color};box-shadow:0 0 10px ${hexA(char.color, 0.6)}"></div>
+                    <div class="char-identity">
+                        <div class="char-name">${char.name}</div>
+                        <div class="char-color">${char.label}</div>
+                    </div>
+                    <div class="card-index">0${ci + 1}</div>
+                </div>
+                <ul class="abilities">
+                    ${char.abilities.map((a, ai) => `
+                        <li class="ability" data-id="${a.id}" data-ci="${ci}">
+                            <div class="ability-num">0${ai + 1}</div>
+                            <div class="ability-content">
+                                <div class="ability-name">${a.name}</div>
+                                <div class="ability-desc">${a.desc}</div>
+                            </div>
+                        </li>`).join('')}
+                </ul>`;
+
+            card.querySelectorAll('.ability').forEach(li => {
+                li.addEventListener('click', () => openDemo(li.dataset.id, CHARS[+li.dataset.ci]));
+            });
+
+            rosterEl.appendChild(card);
+
+            const pip = document.createElement('div');
+            pip.className = 'legend-item';
+            pip.innerHTML = `<div class="legend-pip" style="background:${char.color};box-shadow:0 0 6px ${hexA(char.color, 0.5)}"></div>${char.name}`;
+            legendEl.appendChild(pip);
+        });
+    }
+
+    /* ══════════════════════
+       DEMO MODAL
+    ══════════════════════ */
+    function openDemo(abilId, char) {
+        const demo = DEMOS[abilId];
+        if (!demo) return;
+        _id = abilId; _color = char.color; _demo = demo; _activated = false;
+
+        const demoBox     = document.getElementById('demo-box');
+        const titleEl     = document.getElementById('demo-title');
+        const charEl      = document.getElementById('demo-char');
+        const badgeEl     = document.getElementById('demo-badge');
+        const bannerEl    = document.getElementById('demo-banner');
+        const bannerTxtEl = document.getElementById('demo-banner-text');
+        const demoLegEl   = document.getElementById('demo-legend');
+        const noteEl      = document.getElementById('demo-note');
+        const actBtn      = document.getElementById('demo-activate-btn');
+
+        demoBox.style.setProperty('--demo-accent', char.color);
+        demoBox.style.setProperty('--demo-accent-10', hexA(char.color, 0.07));
+
+        let abilName = abilId;
+        for (const c of CHARS) for (const a of c.abilities) if (a.id === abilId) abilName = a.name;
+
+        titleEl.textContent  = abilName;
+        charEl.textContent   = `${char.name}  ·  ${char.label}`;
+        noteEl.textContent   = demo.note;
+        noteEl.style.borderLeftColor = char.color;
+
+        badgeEl.textContent  = 'BEFORE';
+        badgeEl.classList.remove('after');
+        bannerEl.classList.remove('visible');
+        bannerTxtEl.textContent = '';
+
+        actBtn.disabled = (!demo.after && !demo.banner);
+
+        demoLegEl.innerHTML = `
+            <div class="demo-legend-item">
+                <div class="demo-legend-swatch" style="background:${hexA(char.color, 0.85)};border:1px solid ${char.color}"></div>You
+            </div>
+            <div class="demo-legend-item">
+                <div class="demo-legend-swatch" style="background:rgba(220,70,70,.7);border:1px solid #e05050"></div>Enemy
+            </div>`;
+
+        renderGrid(demo.before, demo.target, char.color, false);
+        document.getElementById('demo-overlay').classList.add('open');
+    }
+
+    function closeDemo() {
+        document.getElementById('demo-overlay').classList.remove('open');
+    }
+
+    function activateDemo() {
+        if (_activated || !_demo) return;
+        _activated = true;
+
+        const badgeEl    = document.getElementById('demo-badge');
+        const bannerEl   = document.getElementById('demo-banner');
+        const bannerTxtEl = document.getElementById('demo-banner-text');
+        const actBtn     = document.getElementById('demo-activate-btn');
+
+        actBtn.disabled = true;
+        badgeEl.textContent = 'AFTER';
+        badgeEl.classList.add('after');
+
+        if (_demo.banner) {
+            bannerTxtEl.textContent = _demo.banner;
+            bannerEl.classList.add('visible');
+            renderGrid(_demo.before, _demo.target, _color, false);
+            return;
+        }
+        renderGrid(_demo.after, _demo.target, _color, true);
+    }
+
+    function resetDemo() {
+        if (!_demo) return;
+        _activated = false;
+
+        const badgeEl    = document.getElementById('demo-badge');
+        const bannerEl   = document.getElementById('demo-banner');
+        const bannerTxtEl = document.getElementById('demo-banner-text');
+        const actBtn     = document.getElementById('demo-activate-btn');
+
+        actBtn.disabled = (!_demo.after && !_demo.banner);
+        badgeEl.textContent = 'BEFORE';
+        badgeEl.classList.remove('after');
+        bannerEl.classList.remove('visible');
+        bannerTxtEl.textContent = '';
+        renderGrid(_demo.before, _demo.target, _color, false);
+    }
+
+    /* ══════════════════════
+       GRID RENDERER
+    ══════════════════════ */
+    function renderGrid(state, target, playerColor, animate) {
+        const gridEl = document.getElementById('demo-grid');
+        const snap = {};
+        gridEl.querySelectorAll('.demo-cell').forEach(el => {
+            snap[el.dataset.r + ',' + el.dataset.c] = el.className + '|' + el.innerHTML;
+        });
+
+        gridEl.innerHTML = '';
+
+        for (let r = 0; r < 5; r++) {
+            for (let c = 0; c < 5; c++) {
+                const [owner, count, flags] = state[r][c];
+                const el = document.createElement('div');
+                el.className = 'demo-cell';
+                el.dataset.r = r;
+                el.dataset.c = c;
+
+                if (owner === 0) el.classList.add('own');
+                if (owner === 1) el.classList.add('foe');
+                if (isHL(r, c, target)) el.classList.add('hl');
+
+                if (flags === 'f')   el.classList.add('frz');
+                if (flags === 'ign') el.classList.add('ign');
+                if (flags === 'iw')  el.classList.add('iw');
+                if (flags === 'sf')  el.classList.add('sf');
+
+                if (flags === 'inf' || flags === 'emb') {
+                    const dot = document.createElement('div');
+                    dot.className = 'cell-dot';
+                    dot.style.background = flags === 'inf' ? '#1fd97a' : '#ff8844';
+                    el.appendChild(dot);
+                }
+
+                if (owner >= 0 && count > 0) {
+                    const col       = owner === 0 ? playerColor : '#e05555';
+                    const show      = Math.min(count, 3);
+                    const positions = ROSTER_ORB_POS[show];
+                    positions.forEach(([dx, dy]) => {
+                        const orb = document.createElement('div');
+                        orb.className = 'demo-orb';
+                        orb.style.cssText = `
+                            width:26%;height:26%;
+                            background:${col};
+                            box-shadow:0 0 4px ${hexA(col, 0.65)};
+                            left:calc(50% + ${dx}%);
+                            top:calc(50% + ${dy}%);`;
+                        el.appendChild(orb);
+                    });
+                }
+
+                if (animate) {
+                    const key = r + ',' + c;
+                    if (snap[key] && snap[key] !== (el.className + '|' + el.innerHTML)) {
+                        el.classList.add('changed');
+                    }
+                }
+
+                gridEl.appendChild(el);
+            }
+        }
+    }
+
+    /* ══════════════════════
+       OVERLAY TOGGLE
+       Exported to window for HTML onclick="toggleRoster()".
+       Safe to call before DOMContentLoaded fires — the handler
+       itself does the getElementById at call-time, not at parse-time.
+    ══════════════════════ */
+    window.toggleRoster = function () {
+        const overlay = document.getElementById('roster-overlay');
+        if (overlay.classList.contains('open')) {
+            overlay.classList.remove('open');
+            overlay.addEventListener('transitionend', function handler(ev) {
+                if (ev.propertyName !== 'opacity') return;
+                overlay.style.display = 'none';
+                overlay.removeEventListener('transitionend', handler);
+            });
+        } else {
+            overlay.style.display = 'flex';
+            requestAnimationFrame(() => requestAnimationFrame(() => overlay.classList.add('open')));
+        }
+    };
+
+    /* ══════════════════════
+       INIT — wire up event listeners and build cards once DOM is ready
+    ══════════════════════ */
+    function init() {
+        buildRoster();
+
+        document.getElementById('demo-close-btn')
+            .addEventListener('click', closeDemo);
+
+        document.getElementById('demo-overlay')
+            .addEventListener('click', ev => { if (ev.target === ev.currentTarget) closeDemo(); });
+
+        document.getElementById('demo-activate-btn')
+            .addEventListener('click', activateDemo);
+
+        document.getElementById('demo-reset-btn')
+            .addEventListener('click', resetDemo);
+
+        document.addEventListener('keydown', ev => { if (ev.key === 'Escape') closeDemo(); });
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+})();
