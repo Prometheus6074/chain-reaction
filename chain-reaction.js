@@ -2819,9 +2819,15 @@ function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
         }
         case 'riptide': {
             // CSS flash
+            const _rtTop   = Array.from({ length: cfg.cols }, (_, c) => S.grid[0][c].owner === playerIdx).some(Boolean);
+            const _rtBot   = Array.from({ length: cfg.cols }, (_, c) => S.grid[cfg.rows - 1][c].owner === playerIdx).some(Boolean);
+            const _rtLeft  = Array.from({ length: cfg.rows }, (_, r) => S.grid[r][0].owner === playerIdx).some(Boolean);
+            const _rtRight = Array.from({ length: cfg.rows }, (_, r) => S.grid[r][cfg.cols - 1].owner === playerIdx).some(Boolean);
             nrFlashBoard((r, c) => {
-                const er = r === 0 || r === cfg.rows - 1 || c === 0 || c === cfg.cols - 1;
-                return er && neighbors(r, c).some(([nr, nc]) => S.grid[nr][nc].owner === playerIdx);
+                const isTop   = r === 0, isBot   = r === cfg.rows - 1;
+                const isLeft  = c === 0, isRight = c === cfg.cols - 1;
+                if (!isTop && !isBot && !isLeft && !isRight) return false;
+                return (isTop && _rtTop) || (isBot && _rtBot) || (isLeft && _rtLeft) || (isRight && _rtRight);
             }, 'nr-riptide-flash');
             // Canvas: 3 wave lines sweep inward from each of the 4 edges
             const rtColor = PCOLORS[playerIdx];
@@ -4119,15 +4125,22 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
         }
 
         case 'riptide': {
+            // Check which edges have at least one player cell — the entire edge is claimed if so
+            const topHas   = Array.from({ length: cfg.cols }, (_, c) => S.grid[0][c].owner === playerIdx).some(Boolean);
+            const botHas   = Array.from({ length: cfg.cols }, (_, c) => S.grid[cfg.rows - 1][c].owner === playerIdx).some(Boolean);
+            const leftHas  = Array.from({ length: cfg.rows }, (_, r) => S.grid[r][0].owner === playerIdx).some(Boolean);
+            const rightHas = Array.from({ length: cfg.rows }, (_, r) => S.grid[r][cfg.cols - 1].owner === playerIdx).some(Boolean);
             for (let r2 = 0; r2 < cfg.rows; r2++) {
                 for (let c2 = 0; c2 < cfg.cols; c2++) {
-                    const isEdge = r2 === 0 || r2 === cfg.rows - 1 || c2 === 0 || c2 === cfg.cols - 1;
-                    if (!isEdge) continue;
+                    const isTop   = r2 === 0;
+                    const isBot   = r2 === cfg.rows - 1;
+                    const isLeft  = c2 === 0;
+                    const isRight = c2 === cfg.cols - 1;
+                    if (!isTop && !isBot && !isLeft && !isRight) continue;
+                    // Cell qualifies if it sits on at least one triggered edge
+                    if (!(isTop && topHas) && !(isBot && botHas) && !(isLeft && leftHas) && !(isRight && rightHas)) continue;
                     const cell = S.grid[r2][c2];
                     if (cell.owner === playerIdx) continue;
-                    const adjOwn = neighbors(r2, c2).some(([nr, nc]) => S.grid[nr][nc].owner === playerIdx);
-                    if (!adjOwn) continue;
-                    // Transfer orb counts cleanly
                     if (cell.owner !== -1) S.orbCount[cell.owner] -= cell.count;
                     if (cell.count === 0) { cell.count = 1; }
                     S.orbCount[playerIdx] += cell.count;
