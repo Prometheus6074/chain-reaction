@@ -2523,11 +2523,20 @@ body.skin-numbered .orb-count-badge {
 }
 
 /* ── Shared NR status badge style ── */
-.cell .nr-badge {
+.cell .nr-badge-stack {
     position: absolute;
-    top: 3px;
+    top: 2px;
     left: 50%;
     transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    pointer-events: none;
+    z-index: 4;
+}
+
+.cell .nr-badge {
     font-family: 'Share Tech Mono', monospace;
     font-size: 8px;
     font-weight: 700;
@@ -2537,7 +2546,6 @@ body.skin-numbered .orb-count-badge {
     pointer-events: none;
     white-space: nowrap;
     line-height: 1.4;
-    z-index: 4;
 }
 
 /* FRZ badge */
@@ -2560,8 +2568,8 @@ body.skin-numbered .orb-count-badge {
     animation: nr-infect-pulse 1.2s ease-in-out infinite;
 }
 @keyframes nr-infect-pulse {
-    0%, 100% { opacity: 0.8; transform: translateX(-50%) scale(1); }
-    50%       { opacity: 1;   transform: translateX(-50%) scale(1.05); }
+    0%, 100% { opacity: 0.8;  transform: scale(1); }
+    50%       { opacity: 1;   transform: scale(1.05); }
 }
 
 /* EMBR badge */
@@ -2577,13 +2585,25 @@ body.skin-numbered .orb-count-badge {
     70%       { opacity: 0.9; }
 }
 
-/* IGN badge */
+/* IGN badge — sits at the bottom of the cell, outside the stack */
 .cell .nr-badge-ignite {
+    position: absolute;
+    bottom: 3px;
+    left: 50%;
+    transform: translateX(-50%);
     background: rgba(255,102,51,0.25);
     color: #ff6633;
     border: 1px solid rgba(255,102,51,0.6);
-    bottom: 3px;
-    top: auto;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 1px 4px;
+    border-radius: 3px;
+    pointer-events: none;
+    white-space: nowrap;
+    line-height: 1.4;
+    z-index: 4;
     animation: nr-ignite-blink 0.5s ease-in-out infinite;
 }
 @keyframes nr-ignite-blink {
@@ -2905,4 +2925,34 @@ body.skin-numbered .orb-count-badge {
     25%  { background: rgba(0, 0, 0, 0.65); }
     60%  { background: rgba(0, 0, 0, 0.45); }
     100% { background: rgba(0, 0, 0, 0); }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   TEST MODE
+   ══════════════════════════════════════════════════════════════════ */
+#test-mode-row {
+    border-top: 1px dashed rgba(31,217,122,0.2);
+    margin-top: 4px;
+    padding-top: 6px;
+}
+.test-color-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    margin-left: 6px;
+    padding: 0;
+    vertical-align: middle;
+    opacity: 0.85;
+    transition: opacity 0.15s, transform 0.15s;
+    color: #000;
+    flex-shrink: 0;
+}
+.test-color-btn:hover {
+    opacity: 1;
+    transform: rotate(45deg) scale(1.15);
 }

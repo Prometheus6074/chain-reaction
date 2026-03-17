@@ -87,7 +87,7 @@ function simApplyMove(grid, orbCount, eliminated, hasMoved, player, r, c) {
     return s;
 }
 
-/* Matches original behaviour: positional scoring uses S.grid (live board) */
+/* Matches original behaviour: positional scoring uses S_grid (live board snapshot) */
 function simHeuristic(grid, orbCount, eliminated, aiIdx) {
     if (eliminated[aiIdx]) return -Infinity;
     const survivors = eliminated.filter(e => !e).length;
@@ -131,13 +131,8 @@ function simCandidates(grid, orbCount, player, maxMoves) {
                 const ncell = grid[nr][nc];
                 if (ncell.owner !== -1 && ncell.owner !== player) {
                     score += 3;
-                    if (ncell.count >= simCrit(nr, nc) - 1) score += 5;
+                    if (ncell.count >= simCrit(nr, nc) - 1) { score += 5; score -= 4; }
                 }
-            }
-            for (const [nr, nc] of simNeighbors(r, c)) {
-                const ncell = grid[nr][nc];
-                if (ncell.owner !== -1 && ncell.owner !== player &&
-                    ncell.count >= simCrit(nr, nc) - 1) score -= 4;
             }
             scored.push({ r, c, score });
         }
@@ -154,7 +149,7 @@ function simNextPlayer(current, eliminated) {
 }
 
 /* Compact key: owner+1 fits in 0-8, count fits in 0-31, pack into base36 */
-function makeKey(turnPlayer, depth, orbCount, eliminated, grid) {
+function makeKey(turnPlayer, depth, grid) {
     let k = turnPlayer + '|' + depth + '|';
     for (let r = 0; r < ROWS; r++)
         for (let c = 0; c < COLS; c++) {
@@ -164,8 +159,8 @@ function makeKey(turnPlayer, depth, orbCount, eliminated, grid) {
     return k;
 }
 
-function minimax(grid, orbCount, eliminated, hasMoved, aiIdx, turnPlayer, depth, alpha, beta, memo) {
-    const key = makeKey(turnPlayer, depth, orbCount, eliminated, grid);
+function minimax(grid, orbCount, eliminated, hasMoved, aiIdx, turnPlayer, depth, alpha, beta, memo, numPlayers) {
+    const key = makeKey(turnPlayer, depth, grid);
     if (memo.has(key)) return memo.get(key);
 
     const survivors = eliminated.map((e, i) => !e ? i : -1).filter(i => i >= 0);
@@ -186,17 +181,32 @@ function minimax(grid, orbCount, eliminated, hasMoved, aiIdx, turnPlayer, depth,
     }
 
     if (turnPlayer === aiIdx) {
+        // Maximising: AI picks move that leads to highest value
         let best = -Infinity;
         for (const [r, c] of moves) {
             const s    = simApplyMove(grid, orbCount, eliminated, hasMoved, turnPlayer, r, c);
             const next = simNextPlayer(turnPlayer, s.eliminated);
-            const val  = minimax(s.grid, s.orbCount, s.eliminated, s.hasMoved, aiIdx, next, depth - 1, alpha, beta, memo);
+            const val  = minimax(s.grid, s.orbCount, s.eliminated, s.hasMoved, aiIdx, next, depth - 1, alpha, beta, memo, numPlayers);
             if (val > best)  best  = val;
             if (best > alpha) alpha = best;
             if (beta <= alpha) break;
         }
         memo.set(key, best); return best;
+    } else if (numPlayers === 2) {
+        // 2-player: true adversarial — opponent minimises AI's score
+        let worst = Infinity;
+        for (const [r, c] of moves) {
+            const s    = simApplyMove(grid, orbCount, eliminated, hasMoved, turnPlayer, r, c);
+            const next = simNextPlayer(turnPlayer, s.eliminated);
+            const val  = minimax(s.grid, s.orbCount, s.eliminated, s.hasMoved, aiIdx, next, depth - 1, alpha, beta, memo, numPlayers);
+            if (val < worst) worst = val;
+            if (worst < beta) beta = worst;
+            if (beta <= alpha) break;
+        }
+        memo.set(key, worst); return worst;
     } else {
+        // 3+ players: each opponent plays greedily for themselves — paranoid assumption
+        // breaks down in multiplayer since opponents aren't actually coordinating against us
         let bestOppVal = -Infinity, bestR = moves[0][0], bestC = moves[0][1];
         for (const [r, c] of moves) {
             const s   = simApplyMove(grid, orbCount, eliminated, hasMoved, turnPlayer, r, c);
@@ -205,12 +215,12 @@ function minimax(grid, orbCount, eliminated, hasMoved, aiIdx, turnPlayer, depth,
         }
         const s    = simApplyMove(grid, orbCount, eliminated, hasMoved, turnPlayer, bestR, bestC);
         const next = simNextPlayer(turnPlayer, s.eliminated);
-        const val  = minimax(s.grid, s.orbCount, s.eliminated, s.hasMoved, aiIdx, next, depth - 1, alpha, beta, memo);
+        const val  = minimax(s.grid, s.orbCount, s.eliminated, s.hasMoved, aiIdx, next, depth - 1, alpha, beta, memo, numPlayers);
         memo.set(key, val); return val;
     }
 }
 
-function aiPickMove(aiIdx, grid, orbCount, eliminated, hasMoved, isHard) {
+function aiPickMove(aiIdx, grid, orbCount, eliminated, hasMoved, isHard, numPlayers) {
     const depth = isHard
         ? (ROWS * COLS <= 49 ? 4 : 3)
         : (ROWS * COLS <= 49 ? 2 : 1);
@@ -223,7 +233,7 @@ function aiPickMove(aiIdx, grid, orbCount, eliminated, hasMoved, isHard) {
         const s    = simApplyMove(grid, orbCount, eliminated, hasMoved, aiIdx, r, c);
         const next = simNextPlayer(aiIdx, s.eliminated);
         const score = depth >= 2
-            ? minimax(s.grid, s.orbCount, s.eliminated, s.hasMoved, aiIdx, next, depth - 1, -Infinity, Infinity, memo)
+            ? minimax(s.grid, s.orbCount, s.eliminated, s.hasMoved, aiIdx, next, depth - 1, -Infinity, Infinity, memo, numPlayers)
             : simHeuristic(s.grid, s.orbCount, s.eliminated, aiIdx);
         if (score > bestScore) { bestScore = score; bestMove = [r, c]; }
     }
@@ -231,10 +241,10 @@ function aiPickMove(aiIdx, grid, orbCount, eliminated, hasMoved, isHard) {
 }
 
 self.onmessage = function (e) {
-    const { grid, orbCount, eliminated, hasMoved, aiIdx, isHard, rows, cols } = e.data;
+    const { grid, orbCount, eliminated, hasMoved, aiIdx, isHard, rows, cols, numPlayers } = e.data;
     ROWS = rows;
     COLS = cols;
     S_grid = grid; /* snapshot of live board for heuristic — matches original S.grid behaviour */
-    const move = aiPickMove(aiIdx, grid, orbCount, eliminated, hasMoved, isHard);
+    const move = aiPickMove(aiIdx, grid, orbCount, eliminated, hasMoved, isHard, numPlayers);
     self.postMessage({ move });
 };

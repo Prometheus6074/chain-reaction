@@ -60,6 +60,11 @@ let timedSeconds = 180;     // default 3 min per player
 let playerTimers = [];      // remaining ms per player
 let _timedInterval = null;
 
+/* ── Test Mode ── */
+let testMode = false;
+const _TEST_SEQUENCE = [6, 9, 6, 9]; // grid sizes to click in order
+let _testSeqProgress = 0;
+
 /* ── Nuclear Reaction Mode ── */
 let nuclearMode = false;
 let _nrTargeting = null; // { player, abilityId, phase, firstCell }
@@ -108,8 +113,8 @@ const NR_ABILITIES = {
 };
 
 /* ── Match stats ── */
-let matchStats = { totalTurns: 0, maxCombo: 0, maxComboPlayer: -1 };
-function resetMatchStats() { matchStats = { totalTurns: 0, maxCombo: 0, maxComboPlayer: -1 }; }
+let matchStats = { maxCombo: 0, maxComboPlayer: -1 };
+function resetMatchStats() { matchStats = { maxCombo: 0, maxComboPlayer: -1 }; }
 
 /* ══════════════════════════════════════════════════════════════════
    FIREBASE / ONLINE STATE
@@ -125,15 +130,13 @@ let isHost = false;
 let roomCode = null;
 let roomRef = null;
 let onlineListeners = [];   // { ref, listener, event }
-let lastWrittenStateTs = 0; // ts of the last state we wrote, to skip our own echoes
 let onlineCfgRows = 9;
 let onlineCfgCols = 9;
 let onlineNumPlayers = 2;
-let onlineRoomPassword = '';
 let myUsername = sessionStorage.getItem('cr_username') || localStorage.getItem('cr_username') || '';
 let _onlineTurnTimerInterval = null;
 let _nrRoundStartOrbs = []; // snapshot of orbCounts at the start of each round for underdog check
-let _pendingStateSnap = null; // queued state update received while animating
+
 const TURN_TIMER_MS = 30000; // 30 seconds per turn
 
 /* ── Firebase init (lazy) ── */
@@ -193,7 +196,11 @@ function generateRoomCode() {
     [[6, 6, '6×6'], [7, 7, '7×7'], [8, 8, '8×8'], [9, 9, '9×9'], [10, 10, '10×10']].forEach(([r, c, l]) => {
         const b = document.createElement('button');
         b.className = 'pill'; b.textContent = l;
-        b.onclick = () => { cfg.rows = r; cfg.cols = c; syncGridBtns(); };
+        b.onclick = () => {
+            cfg.rows = r; cfg.cols = c;
+            syncGridBtns();
+            _checkTestSequence(r);
+        };
         gb.appendChild(b);
     });
     syncGridBtns();
@@ -243,7 +250,7 @@ function showOlPanel(id) {
     if (document.activeElement && document.activeElement.tagName === 'INPUT') {
         document.activeElement.blur();
     }
-    ['ol-username', 'ol-mode', 'ol-create', 'ol-join-panel', 'ol-waiting', 'ol-random-join'].forEach(p => {
+    ['ol-username', 'ol-mode', 'ol-create', 'ol-join-panel', 'ol-waiting'].forEach(p => {
         const el = document.getElementById(p);
         if (el) el.style.display = p === id ? 'flex' : 'none';
     });
@@ -262,8 +269,6 @@ function showOnlineLobby() {
     if (myUsername) {
         showOlMode();
     } else {
-        const input = document.getElementById('ol-username-input');
-        if (input) input.value = myUsername;
         document.getElementById('ol-username-error').style.display = 'none';
         showOlPanel('ol-username');
     }
@@ -345,7 +350,6 @@ async function createRoom() {
     myPlayerIndex = 0;
 
     const passwordRaw = (document.getElementById('ol-password-input').value || '').trim();
-    onlineRoomPassword = passwordRaw;
 
     const roomData = {
         config: {
@@ -484,13 +488,30 @@ async function joinRandomRoom() {
 
         // Pick a random candidate
         const pick = candidates[Math.floor(Math.random() * candidates.length)];
-        myUid = getMyUid();
         isHost = false;
         roomCode = pick.code;
         roomRef = db.ref(`rooms/${roomCode}`);
         myPlayerIndex = pick.openSlot;
 
-        await roomRef.child(`slots/${pick.openSlot}`).set({ uid: myUid, joined: true, name: myUsername, color: ALL_COLORS[pick.openSlot] });
+        // Use a transaction to atomically claim the slot — prevents two players
+        // simultaneously picking the same open slot from a stale snapshot.
+        const slotRef = roomRef.child(`slots/${pick.openSlot}`);
+        let claimed = false;
+        try {
+            const result = await slotRef.transaction(current => {
+                if (current !== null) return; // slot already taken — abort
+                return { uid: myUid, joined: true, name: myUsername, color: ALL_COLORS[pick.openSlot] };
+            });
+            claimed = result.committed;
+        } catch (e) {
+            claimed = false;
+        }
+        if (!claimed) {
+            statusEl.textContent = 'Room was taken — try again!';
+            btn.disabled = false;
+            roomRef = null; roomCode = null; myPlayerIndex = -1;
+            return;
+        }
 
         statusEl.style.display = 'none';
         btn.disabled = false;
@@ -781,14 +802,23 @@ function animateElimination(playerIndex, onDone) {
 /* ── Handle a player disconnect: eliminate them, wipe orbs, advance turn ── */
 function handlePlayerDisconnect(playerIndex) {
     if (!S || S.over) return;
+    // Clear any active NR targeting — the targeting player may be the one disconnecting,
+    // or the disconnect may trigger a win that ends the game mid-target
+    nrExitTargeting();
     window._playerDisconnectedThisGame = true;
     animateElimination(playerIndex, () => {
-    // Wipe all their orbs from the board
+    // Wipe all their orbs from the board, preserving IGN — it targets the cell itself
     for (let r = 0; r < cfg.rows; r++) {
         for (let c = 0; c < cfg.cols; c++) {
             if (S.grid[r][c].owner === playerIndex) {
                 S.orbCount[playerIndex] -= S.grid[r][c].count;
-                S.grid[r][c] = { owner: -1, count: 0 };
+                const cell = S.grid[r][c];
+                S.grid[r][c] = {
+                    owner: -1, count: 0,
+                    frozen: 0, infect: -1, backdraft: -1,
+                    ignite: cell.ignite || 0, igniteOwner: cell.igniteOwner ?? -1,
+                    _cryoFrozen: false, frozenBy: -1, _absZeroFrozen: false
+                };
             }
         }
     }
@@ -830,8 +860,6 @@ function resetOnlineState() {
     roomCode = null;
     isHost = false;
     myPlayerIndex = -1;
-    lastWrittenStateTs = 0;
-    onlineRoomPassword = '';
     _gameLaunched = false;
 }
 
@@ -1003,8 +1031,7 @@ function escapeHtml(str) {
 }
 
 function addSystemChatMessage(text) {
-    if (!document.getElementById('chat-panel')?.classList.contains('open') &&
-        document.getElementById('chat-panel')?.style.display !== 'none') {
+    if (!document.getElementById('chat-panel')?.classList.contains('open')) {
         chatUnreadCount++;
         updateChatUnread();
     }
@@ -1050,7 +1077,6 @@ function launchOnlineGame(room) {
     startPlayerTimer();
     // Track last applied move sequence to avoid duplicates (clock-skew-proof)
     let lastSeenMoveSeq = room.state?.moveSeq ?? 0;
-    _pendingStateSnap = null;
 
     // Listen for state changes (other players' moves)
     const stateRef = roomRef.child('state');
@@ -1090,6 +1116,12 @@ function launchOnlineGame(room) {
             playRemoteMove(data.move.r, data.move.c, data);
         } else {
             // State-only update (NR ability, blackout skip, timer elimination, etc.)
+            // Play the ability animation before snapping to the new board state so
+            // all players see the visual even though they didn't trigger it.
+            if (nuclearMode && data.pendingAbility) {
+                const pa = data.pendingAbility;
+                nrPlayAbilityAnim(pa.playerIdx, pa.abilId, pa.target ?? null, pa.secondTarget ?? null);
+            }
             if (_nrTargeting) nrExitTargeting();
             S = deserializeState(data);
             markAllDirty(); renderAll();
@@ -1160,7 +1192,10 @@ function updateOnlineInteractivity() {
     }
     const myTurn = S.current === myPlayerIndex && !IS_AI[S.current];
     setGridInteractive(myTurn && !S.animating);
-    hint.textContent = myTurn ? '▸ Your turn — click a cell' : IS_AI[S.current] ? '' : `Waiting for ${PNAMES[S.current]}…`;
+    const playIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align:-1px;margin-right:3px"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+    hint.innerHTML = myTurn
+        ? `${playIcon}Your turn — click a cell`
+        : IS_AI[S.current] ? '' : `Waiting for ${escapeHtml(PNAMES[S.current])}…`;
     hint.className = 'online-turn-hint' + (myTurn ? ' your-turn' : '');
     startOnlineTurnTimer();
 }
@@ -1198,8 +1233,9 @@ function startOnlineTurnTimer() {
         // Update hint text with countdown
         if (hint && !S.animating) {
             const myTurn = S.current === myPlayerIndex;
+            const playIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align:-1px;margin-right:3px"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
             if (myTurn) {
-                hint.textContent = `▸ Your turn — ${secs}s`;
+                hint.innerHTML = `${playIcon}Your turn — ${secs}s`;
             } else {
                 hint.textContent = `Waiting for ${PNAMES[S.current]}… (${secs}s)`;
             }
@@ -1420,6 +1456,7 @@ async function pushStateToFirebase() {
         // turnDeadline is no longer stored — each client derives it from the server-set ts on read
         const serialized = serializeState(S);
         S.moveSeq = serialized.moveSeq; // keep local state in sync
+        S.pendingAbility = null;        // consumed — subsequent pushes won't replay the animation
         await roomRef.child('state').set(serialized);
         if (S.over) await roomRef.child('status').set('over');
     } catch (e) {
@@ -1446,13 +1483,13 @@ function serializeState(state) {
         moveSeq: (state.moveSeq || 0) + 1,
         writerUid: myUid,
         move: state.pendingMove || null,
+        pendingAbility: state.pendingAbility || null,
         playerTimers: timedMode ? [...playerTimers] : null,
         nrMeter:      nuclearMode ? [...(state.nrMeter      || [])] : null,
         nrAbilityIdx: nuclearMode ? [...(state.nrAbilityIdx || [])] : null,
         nrBlackout:   nuclearMode ? [...(state.nrBlackout   || [])] : null,
         nrSurge:      nuclearMode ? [...(state.nrSurge      || [])] : null,
         nrIceWall:    nuclearMode ? [...(state.nrIceWall    || [])] : null,
-        nrFirestorm:  nuclearMode ? [...(state.nrFirestorm  || [])] : null,
         nrStaticField:nuclearMode ? [...(state.nrStaticField|| [])] : null,
         ts: firebase.database.ServerValue.TIMESTAMP
     };
@@ -1489,7 +1526,6 @@ function deserializeState(data) {
         nrBlackout:   data.nrBlackout   ? toArr(data.nrBlackout)   : new Array(np).fill(false),
         nrSurge:      data.nrSurge      ? toArr(data.nrSurge)      : new Array(np).fill(0),
         nrIceWall:    data.nrIceWall    ? toArr(data.nrIceWall)    : new Array(np).fill(false),
-        nrFirestorm:  data.nrFirestorm  ? toArr(data.nrFirestorm)  : new Array(np).fill(false),
         nrStaticField:data.nrStaticField? toArr(data.nrStaticField): new Array(np).fill(false),
     };
     return s;
@@ -1519,6 +1555,7 @@ function startGame() {
     markAllDirty(); renderAll();
     syncUndoBtn();
     if (nuclearMode) nrCanvasInit();
+    if (testMode && S.nrMeter) S.nrMeter.forEach((_, i) => { S.nrMeter[i] = NR_METER_MAX; });
     if (IS_AI[0]) scheduleAiTurn();
     else setGridInteractive(true);
     requestWakeLock();
@@ -1552,10 +1589,10 @@ function initState() {
         nrBlackout:    new Array(np).fill(false),
         nrSurge:       new Array(np).fill(0),
         nrIceWall:     new Array(np).fill(false),
-        nrFirestorm:   new Array(np).fill(false),
         nrStaticField: new Array(np).fill(false),
         _nrSurgeFreeThisTurn: false,
         _nrSurgeUsedThisTurn: 0,
+        pendingAbility: null,
     };
 }
 
@@ -1580,10 +1617,10 @@ function cloneState() {
         nrBlackout:   [...(S.nrBlackout   || [])],
         nrSurge:      [...(S.nrSurge      || [])],
         nrIceWall:    [...(S.nrIceWall    || [])],
-        nrFirestorm:  [...(S.nrFirestorm  || [])],
         nrStaticField:[...(S.nrStaticField|| [])],
         _nrSurgeFreeThisTurn: false, // never carry free-turn across undo
         _nrSurgeUsedThisTurn: 0,
+        pendingAbility: null,        // never carry ability anim payload across undo
     };
 }
 
@@ -1604,7 +1641,6 @@ function neighbors(r, c) {
     return n;
 }
 let gameSession = 0;
-function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 function sessionDelay(ms, session) {
     return new Promise(r => setTimeout(r, ms)).then(() => {
         if (session !== gameSession) throw new Error('stale');
@@ -1632,7 +1668,7 @@ function buildGridDOM() {
             el.className = 'cell';
             el.dataset.r = r; el.dataset.c = c;
             el.style.width = el.style.height = sz + 'px';
-            el.innerHTML = '<div class="orb-layer"></div>';
+            el.innerHTML = '<div class="orb-layer"></div><div class="nr-badge-stack"></div>';
             el.style.animationDelay = `${(r + c) * 22}ms`;
             el.addEventListener('click', () => handleClick(r, c));
             g.appendChild(el);
@@ -1653,8 +1689,13 @@ function buildPlayerStrip() {
         const nrCharIdx = ALL_COLORS.indexOf(PCOLORS[i]);
         const nrCharName = nrCharIdx >= 0 ? NR_CHARS[nrCharIdx].name : '';
         const nrAbilityName = nrCharIdx >= 0 ? NR_ABILITIES[NR_CHARS[nrCharIdx].abilities[0]].name : '';
+        const testColorBtn = testMode
+            ? `<button class="test-color-btn" onclick="event.stopPropagation();cycleTestColor(${i})" title="Cycle color" style="background:${PCOLORS[i]};box-shadow:0 0 6px ${PCOLORS[i]}88">
+                 <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6"/><path d="M21.34 15.57a10 10 0 1 1-.57-8.38"/></svg>
+               </button>`
+            : '';
         card.innerHTML = `
-      <div class="pn" style="color:${PCOLORS[i]}">${PNAMES[i]}${aiChip}${youChip}</div>
+      <div class="pn" style="color:${PCOLORS[i]}">${PNAMES[i]}${aiChip}${youChip}${testColorBtn}</div>
       <div class="pc-wrap">
         <span class="pc" id="porbs${i}">0</span>
         <span class="gain-badge" id="gb${i}"></span>
@@ -1755,8 +1796,8 @@ function makeFlyOrbEl(col, sz) {
    RENDER
    ══════════════════════════════════════════════════════════════════ */
 const dirtyGrid = new Set();
-function markDirty(r, c) { dirtyGrid.add(r * 100 + c); }
-function markAllDirty() { if (!S.grid) return; for (let r = 0; r < cfg.rows; r++) for (let c = 0; c < cfg.cols; c++) dirtyGrid.add(r * 100 + c); }
+function markDirty(r, c) { dirtyGrid.add(r * cfg.cols + c); }
+function markAllDirty() { if (!S.grid) return; for (let r = 0; r < cfg.rows; r++) for (let c = 0; c < cfg.cols; c++) dirtyGrid.add(r * cfg.cols + c); }
 
 let _renderCellSz = 0; /* cached for duration of one renderAll pass */
 function renderAll() {
@@ -1764,9 +1805,9 @@ function renderAll() {
     if (dirtyGrid.size === 0) { renderStrip(); renderBanner(); return; }
     /* Read cell size once from first available cell, reuse for all others */
     const anyCellKey = dirtyGrid.values().next().value;
-    const sampleEl = anyCellKey !== undefined ? cellEl((anyCellKey / 100) | 0, anyCellKey % 100) : null;
+    const sampleEl = anyCellKey !== undefined ? cellEl((anyCellKey / cfg.cols) | 0, anyCellKey % cfg.cols) : null;
     _renderCellSz = (sampleEl && sampleEl.offsetWidth) ? sampleEl.offsetWidth : 0;
-    for (const key of dirtyGrid) { const r = (key / 100) | 0, c = key % 100; renderCell(r, c); }
+    for (const key of dirtyGrid) { const r = ((key / cfg.cols)) | 0, c = key % cfg.cols; renderCell(r, c); }
     _renderCellSz = 0;
     dirtyGrid.clear();
     renderStrip();
@@ -1782,29 +1823,33 @@ function renderCell(r, c) {
     el.classList.remove('near-crit', 'cell-glow');
     el.style.removeProperty('--cell-glow-color');
 
-    if (data.count <= 0) return;
-    const cm = critMass(r, c);
-    const surviving = data.count >= cm ? data.count - cm : data.count;
-    // NR cell status indicators — rendered BEFORE surviving check so they show on critMass cells too
+    // NR badges — handled before the count check so that:
+    // (a) the ignite countdown badge persists on empty cells (IGN×2 → IGN×1 → gone)
+    // (b) stale badges are always cleaned up when a cell empties, not left orphaned
     if (nuclearMode) {
-        el.classList.toggle('nr-frozen', !!(data.frozen > 0));
+        const stack = el.querySelector('.nr-badge-stack');
 
+        // Frozen: only on occupied cells
+        el.classList.toggle('nr-frozen', !!(data.frozen > 0 && data.count > 0));
         let frzBadge = el.querySelector('.nr-badge-frozen');
-        if (data.frozen > 0) {
-            if (!frzBadge) { frzBadge = document.createElement('div'); frzBadge.className = 'nr-badge nr-badge-frozen'; el.appendChild(frzBadge); }
+        if (data.frozen > 0 && data.count > 0) {
+            if (!frzBadge) { frzBadge = document.createElement('div'); frzBadge.className = 'nr-badge nr-badge-frozen'; stack.appendChild(frzBadge); }
             frzBadge.textContent = `FRZ${data.frozen > 1 ? '×' + data.frozen : ''}`;
         } else if (frzBadge) { frzBadge.remove(); }
 
+        // Infect: only on occupied cells
         let infectBadge = el.querySelector('.nr-badge-infect');
-        if (data.infect >= 0) {
-            if (!infectBadge) { infectBadge = document.createElement('div'); infectBadge.className = 'nr-badge nr-badge-infect'; infectBadge.textContent = 'NFCT'; el.appendChild(infectBadge); }
+        if (data.infect >= 0 && data.count > 0) {
+            if (!infectBadge) { infectBadge = document.createElement('div'); infectBadge.className = 'nr-badge nr-badge-infect'; infectBadge.textContent = 'NFCT'; stack.appendChild(infectBadge); }
         } else if (infectBadge) { infectBadge.remove(); }
 
+        // Ember: only on occupied cells (backdraft needs an owner to match)
         let embrBadge = el.querySelector('.nr-badge-ember');
-        if (data.backdraft >= 0 && data.backdraft === data.owner) {
-            if (!embrBadge) { embrBadge = document.createElement('div'); embrBadge.className = 'nr-badge nr-badge-ember'; embrBadge.textContent = 'EMBR'; el.appendChild(embrBadge); }
+        if (data.backdraft >= 0 && data.backdraft === data.owner && data.count > 0) {
+            if (!embrBadge) { embrBadge = document.createElement('div'); embrBadge.className = 'nr-badge nr-badge-ember'; embrBadge.textContent = 'EMBR'; stack.appendChild(embrBadge); }
         } else if (embrBadge) { embrBadge.remove(); }
 
+        // Ignite: shows on empty cells too — stays on el directly at the bottom
         let ignBadge = el.querySelector('.nr-badge-ignite');
         if (data.ignite > 0) {
             if (!ignBadge) { ignBadge = document.createElement('div'); ignBadge.className = 'nr-badge nr-badge-ignite'; el.appendChild(ignBadge); }
@@ -1812,6 +1857,9 @@ function renderCell(r, c) {
         } else if (ignBadge) { ignBadge.remove(); }
     }
 
+    if (data.count <= 0) return;
+    const cm = critMass(r, c);
+    const surviving = data.count >= cm ? data.count - cm : data.count;
     if (surviving <= 0) return;
     const col = PCOLORS[data.owner];
     const cellSz = _renderCellSz || el.offsetWidth || 40;
@@ -2065,11 +2113,10 @@ function simCandidates(grid, orbCount, player, maxMoves) {
             if (cell.count === cm - 1) score += 30; else if (cell.count === cm - 2) score += 12; else score += cell.count * 2;
             simNeighbors(r, c).forEach(([nr, nc]) => {
                 const ncell = grid[nr][nc];
-                if (ncell.owner !== -1 && ncell.owner !== player) { score += 3; if (ncell.count >= simCrit(nr, nc) - 1) score += 5; }
-            });
-            simNeighbors(r, c).forEach(([nr, nc]) => {
-                const ncell = grid[nr][nc];
-                if (ncell.owner !== -1 && ncell.owner !== player && ncell.count >= simCrit(nr, nc) - 1) score -= 4;
+                if (ncell.owner !== -1 && ncell.owner !== player) {
+                    score += 3;
+                    if (ncell.count >= simCrit(nr, nc) - 1) { score += 5; score -= 4; }
+                }
             });
             scored.push({ r, c, score });
         }
@@ -2082,7 +2129,7 @@ function simNextPlayer(current, eliminated) {
     while (eliminated[next] && guard++ < n) next = (next + 1) % n;
     return next;
 }
-function minimax(grid, orbCount, eliminated, hasMoved, aiIdx, turnPlayer, depth, alpha, beta, memo) {
+function minimax(grid, orbCount, eliminated, hasMoved, aiIdx, turnPlayer, depth, alpha, beta, memo, numPlayers) {
     const key = `${turnPlayer}|${depth}|${orbCount}|${eliminated}|` + grid.map(row => row.map(c => `${c.owner},${c.count}`).join(':')).join('|');
     if (memo.has(key)) return memo.get(key);
     const survivors = eliminated.map((e, i) => !e ? i : -1).filter(i => i >= 0);
@@ -2092,15 +2139,28 @@ function minimax(grid, orbCount, eliminated, hasMoved, aiIdx, turnPlayer, depth,
     const moves = simCandidates(grid, orbCount, turnPlayer, MAX_BRANCH);
     if (!moves.length) { const val = simHeuristic(orbCount, eliminated, aiIdx); memo.set(key, val); return val; }
     if (turnPlayer === aiIdx) {
+        // Maximising: find the move that gives AI the best outcome
         let best = -Infinity;
         for (const [r, c] of moves) {
             const s = simApplyMove(grid, orbCount, eliminated, hasMoved, turnPlayer, r, c);
             const next = simNextPlayer(turnPlayer, s.eliminated);
-            const val = minimax(s.grid, s.orbCount, s.eliminated, s.hasMoved, aiIdx, next, depth - 1, alpha, beta, memo);
+            const val = minimax(s.grid, s.orbCount, s.eliminated, s.hasMoved, aiIdx, next, depth - 1, alpha, beta, memo, numPlayers);
             if (val > best) best = val; if (best > alpha) alpha = best; if (beta <= alpha) break;
         }
         memo.set(key, best); return best;
+    } else if (numPlayers === 2) {
+        // 2-player: true adversarial — opponent minimises AI's score
+        let worst = Infinity;
+        for (const [r, c] of moves) {
+            const s = simApplyMove(grid, orbCount, eliminated, hasMoved, turnPlayer, r, c);
+            const next = simNextPlayer(turnPlayer, s.eliminated);
+            const val = minimax(s.grid, s.orbCount, s.eliminated, s.hasMoved, aiIdx, next, depth - 1, alpha, beta, memo, numPlayers);
+            if (val < worst) worst = val; if (worst < beta) beta = worst; if (beta <= alpha) break;
+        }
+        memo.set(key, worst); return worst;
     } else {
+        // 3+ players: each opponent plays greedily for themselves — paranoid assumption
+        // breaks down in multiplayer since opponents aren't actually coordinating against us
         let bestOppVal = -Infinity, bestR = moves[0][0], bestC = moves[0][1];
         for (const [r, c] of moves) {
             const s = simApplyMove(grid, orbCount, eliminated, hasMoved, turnPlayer, r, c);
@@ -2109,12 +2169,13 @@ function minimax(grid, orbCount, eliminated, hasMoved, aiIdx, turnPlayer, depth,
         }
         const s = simApplyMove(grid, orbCount, eliminated, hasMoved, turnPlayer, bestR, bestC);
         const next = simNextPlayer(turnPlayer, s.eliminated);
-        const val = minimax(s.grid, s.orbCount, s.eliminated, s.hasMoved, aiIdx, next, depth - 1, alpha, beta, memo);
+        const val = minimax(s.grid, s.orbCount, s.eliminated, s.hasMoved, aiIdx, next, depth - 1, alpha, beta, memo, numPlayers);
         memo.set(key, val); return val;
     }
 }
 function aiPickMove(aiIdx) {
     const { grid, orbCount, eliminated, hasMoved } = S;
+    const numPlayers = PCOLORS.length;
     const isHard = IS_HARD_AI[aiIdx];
     const depth = isHard
         ? (cfg.rows * cfg.cols <= 49 ? 4 : 3)
@@ -2127,7 +2188,7 @@ function aiPickMove(aiIdx) {
         const s = simApplyMove(grid, orbCount, eliminated, hasMoved, aiIdx, r, c);
         const next = simNextPlayer(aiIdx, s.eliminated);
         const score = depth >= 2
-            ? minimax(s.grid, s.orbCount, s.eliminated, s.hasMoved, aiIdx, next, depth - 1, -Infinity, Infinity, memo)
+            ? minimax(s.grid, s.orbCount, s.eliminated, s.hasMoved, aiIdx, next, depth - 1, -Infinity, Infinity, memo, numPlayers)
             : simHeuristic(s.orbCount, s.eliminated, aiIdx);
         if (score > bestScore) { bestScore = score; bestMove = [r, c]; }
     }
@@ -2146,7 +2207,8 @@ function scheduleAiTurn() {
         aiIdx,
         isHard:     IS_HARD_AI[aiIdx],
         rows:       cfg.rows,
-        cols:       cfg.cols
+        cols:       cfg.cols,
+        numPlayers: PCOLORS.length
     };
     const worker = new Worker('./ai-worker.js');
     worker.onmessage = (e) => {
@@ -2175,12 +2237,18 @@ function scheduleAiTurn() {
 function eliminateTimedOutPlayer(playerIndex) {
     if (!S || S.over || S.eliminated[playerIndex]) return;
     animateElimination(playerIndex, () => {
-        // Wipe their orbs
+        // Wipe their orbs, preserving IGN — it targets the cell itself, not the orbs/owner
         for (let r = 0; r < cfg.rows; r++)
             for (let c = 0; c < cfg.cols; c++)
                 if (S.grid[r][c].owner === playerIndex) {
                     S.orbCount[playerIndex] -= S.grid[r][c].count;
-                    S.grid[r][c] = { owner: -1, count: 0 };
+                    const cell = S.grid[r][c];
+                    S.grid[r][c] = {
+                        owner: -1, count: 0,
+                        frozen: 0, infect: -1, backdraft: -1,
+                        ignite: cell.ignite || 0, igniteOwner: cell.igniteOwner ?? -1,
+                        _cryoFrozen: false, frozenBy: -1, _absZeroFrozen: false
+                    };
                 }
         S.orbCount[playerIndex] = 0;
         S.eliminated[playerIndex] = true;
@@ -2286,7 +2354,7 @@ async function playRemoteMove(r, c, finalData) {
     updateGainBadge(S.current, S.orbCount[S.current] - turnOrbsBefore);
 
     const willExplodeImmediately = cell.count >= critMass(r, c);
-    chainCandidates = new Set(); if (willExplodeImmediately) chainCandidates.add(r * 100 + c);
+    chainCandidates = new Set(); if (willExplodeImmediately) chainCandidates.add(r * cfg.cols + c);
     markDirty(r, c); renderAll();
     try {
         if (!willExplodeImmediately) await sessionDelay(60, mySession);
@@ -2355,7 +2423,7 @@ async function handleClick(r, c) {
     const willExplodeImmediately = cell.count >= critMass(r, c);
     if (window.sfxPlace && !willExplodeImmediately) sfxPlace();
     triggerHaptic(12);
-    chainCandidates = new Set(); if (willExplodeImmediately) chainCandidates.add(r * 100 + c);
+    chainCandidates = new Set(); if (willExplodeImmediately) chainCandidates.add(r * cfg.cols + c);
     markDirty(r, c); renderAll();
     try {
         if (!willExplodeImmediately) await sessionDelay(60, mySession);
@@ -2408,7 +2476,8 @@ async function handleClick(r, c) {
     // Reset surge-used flag whenever the turn actually moves to a new player
     if (nuclearMode) S._nrSurgeUsedThisTurn = 0;
     // Only count a new turn when we've cycled back past the start of the round
-    if (next <= S.current) {
+    const isNewRound = next <= S.current;
+    if (isNewRound) {
         S.turn = (S.turn || 0) + 1;
         // NR: decrement frozen cells and Surge counter once per full round
         if (nuclearMode) {
@@ -2479,6 +2548,8 @@ async function handleClick(r, c) {
                     const bonus = S.orbCount[pi] < avgOrbs ? 8 : 3;
                     S.nrMeter[pi] = Math.min(NR_METER_MAX, (S.nrMeter[pi] || 0) + bonus);
                 }
+                // Test mode: keep all meters pegged at max
+                if (testMode) S.nrMeter.forEach((_, i) => { S.nrMeter[i] = NR_METER_MAX; });
             }
         }
     }
@@ -2508,15 +2579,21 @@ async function handleClick(r, c) {
                 let g2 = 0;
                 while (S.eliminated[next2] && g2++ < PCOLORS.length)
                     next2 = (next2 + 1) % PCOLORS.length;
+                // Check if this second advance also crosses a round boundary
+                const blackoutIsNewRound = next2 <= S.current;
+                if (blackoutIsNewRound) S.turn = (S.turn || 0) + 1;
                 S.current = next2;
                 markAllDirty(); renderAll();
+                // Fire IGN if this blackout skip completed a round
+                await nrProcessTurnStartCells(gameSession, blackoutIsNewRound || isNewRound);
+                if (gameSession !== mySession) return;
                 if (IS_AI[S.current]) scheduleAiTurn();
                 else setGridInteractive(true);
             }
             return;
         }
         // Decrement frozen cells and process ignite auto-explosions
-        await nrProcessTurnStartCells(gameSession);
+        await nrProcessTurnStartCells(gameSession, isNewRound);
         if (gameSession !== mySession) return;
     }
     if (onlineMode) {
@@ -2644,7 +2721,7 @@ function nrFlashCell(r, c, cls, delay = 0) {
 function nrFlashRow(row, cls) {
     for (let c = 0; c < cfg.cols; c++) nrFlashCell(row, c, cls, c * 30);
 }
-function nrFlashCol(col, cls, color) {
+function nrFlashCol(col, cls) {
     for (let r = 0; r < cfg.rows; r++) nrFlashCell(r, col, cls, r * 30);
 }
 function nrFlashArea(centerR, centerC, radius, cls) {
@@ -2941,20 +3018,31 @@ function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
             break;
         }
         case 'encircle': {
-            // CSS flash for qualifying cells
+            // Helper: count 8-directional Napalm neighbors for a cell
+            const napalmCount8 = (r, c) => {
+                let n = 0;
+                for (let dr = -1; dr <= 1; dr++)
+                    for (let dc = -1; dc <= 1; dc++) {
+                        if (dr === 0 && dc === 0) continue;
+                        const nr = r + dr, nc = c + dc;
+                        if (nr >= 0 && nr < cfg.rows && nc >= 0 && nc < cfg.cols
+                            && S.grid[nr][nc].owner === playerIdx) n++;
+                    }
+                return n;
+            };
+            // CSS flash for all affected cells (1+ neighbor)
             nrFlashBoard((r, c) => {
                 const cell = S.grid[r][c];
                 if (cell.owner === -1 || cell.owner === playerIdx) return false;
-                return neighbors(r, c).filter(([nr, nc]) => S.grid[nr][nc].owner === playerIdx).length >= 2;
+                return napalmCount8(r, c) >= 1;
             }, 'nr-encircle-hit');
-            // Canvas: closing fire ring around each qualifying enemy cell
+            // Canvas: closing fire ring only for heavily affected cells (3+ neighbors)
             const encTargets = [];
             for (let r = 0; r < cfg.rows; r++)
                 for (let c = 0; c < cfg.cols; c++) {
                     const cell = S.grid[r][c];
                     if (cell.owner === -1 || cell.owner === playerIdx) continue;
-                    const n = neighbors(r, c).filter(([nr, nc]) => S.grid[nr][nc].owner === playerIdx).length;
-                    if (n >= 2) {
+                    if (napalmCount8(r, c) >= 3) {
                         const center = nrCellCenter(r, c);
                         if (center) encTargets.push(center);
                     }
@@ -3216,7 +3304,7 @@ function nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget) {
             const arcs = [];
             sfCells.forEach(([r, c]) => {
                 neighbors(r, c).forEach(([nr, nc]) => {
-                    if (S.grid[nr][nc].owner !== playerIdx || nr * 100 + nc < r * 100 + c) return;
+                    if (S.grid[nr][nc].owner !== playerIdx || nr * cfg.cols + nc < r * cfg.cols + c) return;
                     const a = nrCellCenter(r, c), b = nrCellCenter(nr, nc);
                     if (a && b) arcs.push({ a, b, jitter: Math.random() * 6 - 3 });
                 });
@@ -3863,6 +3951,8 @@ function nrHandleCellTarget(r, c) {
     const cell = S.grid[r][c];
 
     // Validate target
+    // Frozen cells are never valid — mirrors the nrHighlightCellTargets guard
+    if (nuclearMode && cell.frozen > 0) return;
     let valid = false;
     if (t === 'cell_any')    valid = true;
     if (t === 'cell_enemy')  valid = cell.owner !== -1 && cell.owner !== player;
@@ -3932,6 +4022,8 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
         history.push(cloneState());
         syncUndoBtn();
     }
+    // Record which ability fired so online opponents can play the animation on their end
+    S.pendingAbility = { playerIdx, abilId, target: target ?? null, secondTarget: secondTarget ?? null };
     // Centralized pre-ability animations
     if (nuclearMode) nrPlayAbilityAnim(playerIdx, abilId, target, secondTarget);
     switch (abilId) {
@@ -3953,7 +4045,7 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
             if (delta > 0) { cell.count += delta; S.orbCount[cell.owner] += delta; }
             markDirty(r, c);
             chainCandidates = new Set();
-            chainCandidates.add(r * 100 + c);
+            chainCandidates.add(r * cfg.cols + c);
             nrPostAbility(playerIdx);
             nrRunChainAfterAbility(playerIdx);
             break;
@@ -4014,7 +4106,7 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
                         if (cell.count <= 0) { cell.count = 0; cell.owner = -1; }
                         S.grid[tr][tc].count++;
                         S.orbCount[playerIdx]++;
-                        if (S.grid[tr][tc].count >= critMass(tr, tc)) chainCandidates.add(tr * 100 + tc);
+                        if (S.grid[tr][tc].count >= critMass(tr, tc)) chainCandidates.add(tr * cfg.cols + tc);
                         markDirty(r2, c2); markDirty(tr, tc);
                         nrFlashCell(tr, tc, 'nr-undertow-gain', (tr + tc) * 20);
                     }
@@ -4150,7 +4242,7 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
                         // Static Field immunity: absorb the pandemic as an orb boost
                         cell.count++;
                         S.orbCount[cell.owner]++;
-                        if (cell.count >= critMass(r2, c2)) chainCandidates.add(r2 * 100 + c2);
+                        if (cell.count >= critMass(r2, c2)) chainCandidates.add(r2 * cfg.cols + c2);
                         markDirty(r2, c2);
                     } else if (cell.count > 0) {
                         S.orbCount[cell.owner]--;
@@ -4247,7 +4339,7 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
             markDirty(src.r, src.c); markDirty(dst.r, dst.c);
             // Explosion check on destination
             chainCandidates = new Set();
-            if (dstCell.count >= critMass(dst.r, dst.c)) chainCandidates.add(dst.r * 100 + dst.c);
+            if (dstCell.count >= critMass(dst.r, dst.c)) chainCandidates.add(dst.r * cfg.cols + dst.c);
             nrPostAbility(playerIdx);
             if (chainCandidates.size > 0) nrRunChainAfterAbility(playerIdx);
             else { renderAll(); nrFinishAbilityTurn(playerIdx); }
@@ -4272,7 +4364,7 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
             // Check if either cell is now at or past crit mass → chain react
             chainCandidates = new Set();
             [[secondTarget.r, secondTarget.c], [target.r, target.c]].forEach(([r2, c2]) => {
-                if (S.grid[r2][c2].count >= critMass(r2, c2)) chainCandidates.add(r2 * 100 + c2);
+                if (S.grid[r2][c2].count >= critMass(r2, c2)) chainCandidates.add(r2 * cfg.cols + c2);
             });
             nrPostAbility(playerIdx);
             if (chainCandidates.size > 0) nrRunChainAfterAbility(playerIdx);
@@ -4295,7 +4387,7 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
                     } else if (cell.owner === playerIdx) {
                         cell.count += 2;
                         S.orbCount[playerIdx] += 2;
-                        if (cell.count >= critMass(r2, c2)) chainCandidates.add(r2 * 100 + c2);
+                        if (cell.count >= critMass(r2, c2)) chainCandidates.add(r2 * cfg.cols + c2);
                         markDirty(r2, c2);
                     }
                 }
@@ -4315,6 +4407,7 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
                 if (cell.owner !== -1 && cell.owner !== playerIdx) {
                     cell.frozen = 2;
                     cell._cryoFrozen = true;
+                    cell._absZeroFrozen = false; // clear any prior Absolute Zero shatter flag
                     cell.frozenBy = playerIdx;
                     markDirty(r2, c2);
                 }
@@ -4392,20 +4485,33 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
         }
 
         case 'encircle': {
-            const cm_convert = {};  // 3+ neighbors → convert + ignite 2 turns
-            const cm_ignite1  = {}; // 2 neighbors → ignite 1 turn only (no conversion)
+            // Classify each enemy cell by number of 8-directional Napalm neighbors
+            const cm_drain1   = {}; // 1 neighbor  → reduce 1 orb
+            const cm_drain2   = {}; // 2 neighbors → reduce 2 orbs
+            const cm_ignite1  = {}; // 3 neighbors → ignite 1 turn (no conversion)
+            const cm_convert  = {}; // 4+ neighbors → convert + ignite 2 turns
             for (let r2 = 0; r2 < cfg.rows; r2++) {
                 for (let c2 = 0; c2 < cfg.cols; c2++) {
                     const cell = S.grid[r2][c2];
                     if (cell.owner === -1 || cell.owner === playerIdx) continue;
-                    const napalmNeighbors = neighbors(r2, c2).filter(([nr, nc]) => S.grid[nr][nc].owner === playerIdx).length;
-                    if (napalmNeighbors >= 3) cm_convert[r2 * 100 + c2] = true;
-                    else if (napalmNeighbors === 2) cm_ignite1[r2 * 100 + c2] = true;
+                    let n = 0;
+                    for (let dr = -1; dr <= 1; dr++)
+                        for (let dc = -1; dc <= 1; dc++) {
+                            if (dr === 0 && dc === 0) continue;
+                            const nr = r2 + dr, nc = c2 + dc;
+                            if (nr >= 0 && nr < cfg.rows && nc >= 0 && nc < cfg.cols
+                                && S.grid[nr][nc].owner === playerIdx) n++;
+                        }
+                    const key = r2 * cfg.cols + c2;
+                    if (n >= 4)      cm_convert[key]  = true;
+                    else if (n === 3) cm_ignite1[key] = true;
+                    else if (n === 2) cm_drain2[key]  = true;
+                    else if (n === 1) cm_drain1[key]  = true;
                 }
             }
-            // 3+ neighbors: convert to Napalm and set ignite 2 turns
+            // 4+ neighbors: convert to Napalm and ignite 2 turns
             for (const key of Object.keys(cm_convert)) {
-                const r2 = (parseInt(key) / 100) | 0, c2 = parseInt(key) % 100;
+                const r2 = (+key / cfg.cols) | 0, c2 = +key % cfg.cols;
                 const cell = S.grid[r2][c2];
                 S.orbCount[cell.owner] -= cell.count;
                 cell.owner = playerIdx;
@@ -4414,13 +4520,31 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
                 cell.igniteOwner = playerIdx;
                 markDirty(r2, c2);
             }
-            // 2 neighbors: enemy cell locked and set to explode in Napalm's color for 1 turn
+            // 3 neighbors: ignite 1 turn in Napalm's color, no conversion
             for (const key of Object.keys(cm_ignite1)) {
-                if (cm_convert[key]) continue;
-                const r2 = (parseInt(key) / 100) | 0, c2 = parseInt(key) % 100;
+                const r2 = (+key / cfg.cols) | 0, c2 = +key % cfg.cols;
                 const cell = S.grid[r2][c2];
                 cell.ignite = 1;
                 cell.igniteOwner = playerIdx;
+                markDirty(r2, c2);
+            }
+            // 2 neighbors: drain 2 orbs
+            for (const key of Object.keys(cm_drain2)) {
+                const r2 = (+key / cfg.cols) | 0, c2 = +key % cfg.cols;
+                const cell = S.grid[r2][c2];
+                const drain = Math.min(2, cell.count);
+                S.orbCount[cell.owner] -= drain;
+                cell.count -= drain;
+                if (cell.count <= 0) { cell.count = 0; cell.owner = -1; }
+                markDirty(r2, c2);
+            }
+            // 1 neighbor: drain 1 orb
+            for (const key of Object.keys(cm_drain1)) {
+                const r2 = (+key / cfg.cols) | 0, c2 = +key % cfg.cols;
+                const cell = S.grid[r2][c2];
+                S.orbCount[cell.owner]--;
+                cell.count--;
+                if (cell.count <= 0) { cell.count = 0; cell.owner = -1; }
                 markDirty(r2, c2);
             }
             nrPostAbility(playerIdx);
@@ -4470,7 +4594,7 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
             const startCell = S.grid[dr][dc];
             if (startCell.owner === -1 || startCell.owner === playerIdx) break;
 
-            const visited = new Set([dr * 100 + dc]);
+            const visited = new Set([dr * cfg.cols + dc]);
             const queue = [[dr, dc, 0]]; // [r, c, depth]
             const flashMap = new Map(); // key → depth for animation
 
@@ -4480,12 +4604,12 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
             startCell.count = 2;
             S.orbCount[playerIdx] += 2;
             markDirty(dr, dc);
-            flashMap.set(dr * 100 + dc, 0);
+            flashMap.set(dr * cfg.cols + dc, 0);
 
             while (queue.length > 0) {
                 const [cr, cc, depth] = queue.shift();
                 neighbors(cr, cc).forEach(([nr, nc]) => {
-                    const key = nr * 100 + nc;
+                    const key = nr * cfg.cols + nc;
                     if (visited.has(key)) return;
                     const ncell = S.grid[nr][nc];
                     if (ncell.owner === -1 || ncell.owner === playerIdx) return;
@@ -4507,13 +4631,13 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
 
             // Animate — stagger flash by BFS depth from origin
             flashMap.forEach((depth, key) => {
-                const r2 = (key / 100) | 0, c2 = key % 100;
+                const r2 = ((key / cfg.cols)) | 0, c2 = key % cfg.cols;
                 nrFlashCell(r2, c2, 'nr-decay-hit', depth * 55);
             });
             nrPostAbility(playerIdx);
             // Explosion check — converted cells at critMass (e.g. corner cells at 2 orbs) chain immediately
             for (const key of visited) {
-                const r2 = (key / 100) | 0, c2 = key % 100;
+                const r2 = ((key / cfg.cols)) | 0, c2 = key % cfg.cols;
                 const cell = S.grid[r2][c2];
                 if (cell.owner === playerIdx && cell.count >= critMass(r2, c2))
                     chainCandidates.add(key);
@@ -4576,7 +4700,8 @@ async function nrFinishAbilityTurn(playerIdx) {
     let guard = 0;
     while (S.eliminated[next] && guard++ < PCOLORS.length)
         next = (next + 1) % PCOLORS.length;
-    if (next <= S.current) {
+    let isNewRound = next <= S.current;
+    if (isNewRound) {
         S.turn = (S.turn || 0) + 1;
         // NOTE: frozen/surge decrements and meter bonuses are handled by advanceTurn only.
         // nrFinishAbilityTurn must NOT also decrement them — that would double-count.
@@ -4593,6 +4718,7 @@ async function nrFinishAbilityTurn(playerIdx) {
         // Handle round boundary
         if (skip <= S.current) {
             S.turn = (S.turn || 0) + 1;
+            isNewRound = true;
         }
         S.current = skip;
         if (S.nrIceWall)     S.nrIceWall[S.current]     = false;
@@ -4602,9 +4728,12 @@ async function nrFinishAbilityTurn(playerIdx) {
     S.animating = false;
     syncUndoBtn();
     startPlayerTimer();
-    // NOTE: nrProcessTurnStartCells (ignite/frozen) is intentionally NOT called here.
-    // Ignite fires at the start of the next player's turn via handleClick, giving a full
-    // turn of delay — calling it here would fire ignite immediately after the ability.
+    // Fire IGN if this ability turn crossed a round boundary
+    if (nuclearMode && isNewRound) {
+        const mySession = gameSession;
+        await nrProcessTurnStartCells(mySession, true);
+        if (gameSession !== mySession) return;
+    }
     if (onlineMode) {
         S.pendingMove = null;
         if (!S.over) S.turnDeadline = serverNow() + TURN_TIMER_MS;
@@ -4618,8 +4747,10 @@ async function nrFinishAbilityTurn(playerIdx) {
 }
 
 /* ── Turn-start: process ignite auto-explosions ── */
-async function nrProcessTurnStartCells(session) {
+async function nrProcessTurnStartCells(session, isNewRound) {
     if (!nuclearMode) return;
+    // IGN only fires at the start of a new full round, not every individual turn
+    if (!isNewRound) return;
     let hasIgnite = false;
     for (let r = 0; r < cfg.rows; r++) {
         for (let c = 0; c < cfg.cols; c++) {
@@ -4641,14 +4772,14 @@ async function nrProcessTurnStartCells(session) {
                 // Clear igniteOwner when fully consumed
                 if (cell.ignite === 0) cell.igniteOwner = -1;
                 hasIgnite = true;
-                chainCandidates.add(r * 100 + c);
+                chainCandidates.add(r * cfg.cols + c);
                 markDirty(r, c);
             }
         }
     }
     if (hasIgnite) {
         S.animating = true;
-        try { await chainReact(session); } catch (e) { return; }
+        try { await chainReact(session); } catch (e) { S.animating = false; return; }
         S.animating = false;
         if (!S.over) checkEliminationsAndWin();
         renderAll();
@@ -4662,6 +4793,62 @@ async function nrProcessTurnStartCells(session) {
 /* ── Setup toggle ── */
 function setNuclearMode(on) {
     nuclearMode = on;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   TEST MODE
+   ══════════════════════════════════════════════════════════════════ */
+function _checkTestSequence(gridSize) {
+    if (gridSize === _TEST_SEQUENCE[_testSeqProgress]) {
+        _testSeqProgress++;
+        if (_testSeqProgress >= _TEST_SEQUENCE.length) {
+            _testSeqProgress = 0;
+            const row = document.getElementById('test-mode-row');
+            if (row) {
+                row.style.display = '';
+                // Brief glow flash to acknowledge unlock
+                row.style.transition = 'opacity 0.15s';
+                row.style.opacity = '0';
+                setTimeout(() => { row.style.opacity = '1'; }, 50);
+            }
+        }
+    } else {
+        // Wrong key — reset but check if this click starts a new sequence
+        _testSeqProgress = gridSize === _TEST_SEQUENCE[0] ? 1 : 0;
+    }
+}
+
+function startTestMode() {
+    // Force exactly 2 human players: Red (slot 0) and Blue (slot 1)
+    ballModes.fill(0);
+    ballOrder.length = 0;
+    ballColors[0] = ALL_COLORS[0];
+    ballColors[1] = ALL_COLORS[1];
+    ballModes[0] = 1; ballOrder.push(0);
+    ballModes[1] = 1; ballOrder.push(1);
+
+    // Force nuclear mode on
+    nuclearMode = true;
+    const nmToggle = document.getElementById('nuclear-mode-toggle');
+    if (nmToggle) nmToggle.classList.add('on');
+
+    testMode = true;
+    startGame();
+}
+
+function cycleTestColor(playerIdx) {
+    if (!testMode) return;
+    const used = new Set(PCOLORS.filter((_, i) => i !== playerIdx));
+    const cur = ALL_COLORS.indexOf(PCOLORS[playerIdx]);
+    let next = (cur + 1) % ALL_COLORS.length;
+    let guard = 0;
+    while (used.has(ALL_COLORS[next]) && guard++ < ALL_COLORS.length)
+        next = (next + 1) % ALL_COLORS.length;
+    PCOLORS[playerIdx] = ALL_COLORS[next];
+    ballColors[ballOrder[playerIdx]] = ALL_COLORS[next];
+    markAllDirty();
+    buildPlayerStrip();
+    renderAll();
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -4707,7 +4894,7 @@ async function chainReact(session) {
         if (!chainCandidates.size) break;
         const unstable = [];
         for (const key of chainCandidates) {
-            const r = (key / 100) | 0, c = key % 100;
+            const r = ((key / cfg.cols)) | 0, c = key % cfg.cols;
             if (S.grid[r][c].count >= critMass(r, c)) unstable.push([r, c]);
         }
         chainCandidates = new Set();
@@ -4726,6 +4913,8 @@ async function chainReact(session) {
             const multiplier = isUnderdog ? 1.5 : 1;
             const gain = Math.round(comboCount * NR_METER_PER_COMBO * multiplier);
             S.nrMeter[S.current] = Math.min(NR_METER_MAX, (S.nrMeter[S.current] || 0) + gain);
+            // Test mode: all meters always full
+            if (testMode) for (let i = 0; i < S.nrMeter.length; i++) S.nrMeter[i] = NR_METER_MAX;
         }
         // Passive Surge: if active (counter > 0) and 5+ chain, Voltage gets a free extra turn
         if (nuclearMode && comboCount === 5) {
@@ -4735,19 +4924,6 @@ async function chainReact(session) {
                 && S._nrSurgeUsedThisTurn < 2) {
                 S._nrSurgeFreeThisTurn = true;
                 S._nrSurgeUsedThisTurn++; // max 2 free turns per turn
-                let surgeEl = document.getElementById('nr-surge-label');
-                if (!surgeEl) {
-                    surgeEl = document.createElement('div');
-                    surgeEl.id = 'nr-surge-label';
-                    surgeEl.className = 'nr-surge-label';
-                    document.getElementById('grid-and-combo')?.appendChild(surgeEl);
-                }
-                surgeEl.textContent = 'Surge!';
-                surgeEl.style.color = PCOLORS[S.current];
-                surgeEl.classList.remove('nr-surge-visible');
-                void surgeEl.offsetWidth;
-                surgeEl.classList.add('nr-surge-visible');
-                setTimeout(() => surgeEl.classList.remove('nr-surge-visible'), 1800);
             }
         }
 
@@ -4791,7 +4967,7 @@ async function chainReact(session) {
             if (leaveCryo && cell.count <= 0) {
                 cell.count = 1; cell.owner = spreadOwner; S.orbCount[spreadOwner]++;
             } else if (cell.count <= 0) { cell.count = 0; cell.owner = -1; }
-            else if (cell.count >= critMass(r, c)) chainCandidates.add(r * 100 + c);
+            else if (cell.count >= critMass(r, c)) chainCandidates.add(r * cfg.cols + c);
             markDirty(r, c);
 
             const allNeighbors = neighbors(r, c);
@@ -4815,7 +4991,7 @@ async function chainReact(session) {
                     // Orb lands but ownership doesn't change — absorbed silently
                     ncell.count++; S.orbCount[ncell.owner]++;
                     markDirty(nr, nc);
-                    if (ncell.count >= critMass(nr, nc)) chainCandidates.add(nr * 100 + nc);
+                    if (ncell.count >= critMass(nr, nc)) chainCandidates.add(nr * cfg.cols + nc);
                     const nel = cellEl(nr, nc);
                     if (nel) { nel.classList.remove('ping'); nel.classList.add('ping'); }
                     return;
@@ -4828,7 +5004,7 @@ async function chainReact(session) {
                     ncell.backdraft = -1;
                     ncell.count++;
                     S.orbCount[ncell.owner]++;
-                    if (ncell.count >= critMass(nr, nc)) chainCandidates.add(nr * 100 + nc);
+                    if (ncell.count >= critMass(nr, nc)) chainCandidates.add(nr * cfg.cols + nc);
                     markDirty(nr, nc);
                     const nel = cellEl(nr, nc);
                     if (nel) { nel.classList.remove('ping'); nel.classList.add('ping'); }
@@ -4836,13 +5012,30 @@ async function chainReact(session) {
                 }
                 // Ice Wall: own cells cannot be converted
                 if (nuclearMode && S.nrIceWall && ncell.owner !== -1 && ncell.owner !== spreadOwner && S.nrIceWall[ncell.owner]) return;
-                // Ignite lock: cell is untouchable — block all incoming orbs from any source
-                if (nuclearMode && ncell.ignite > 0) return;
+                // Ignite: any chain reaching this cell triggers immediate explosion in
+                // igniteOwner's color. The mark is fully consumed regardless of remaining count.
+                if (nuclearMode && ncell.ignite > 0) {
+                    const fireOwner = ncell.igniteOwner >= 0 ? ncell.igniteOwner
+                        : (ncell.owner >= 0 ? ncell.owner : spreadOwner);
+                    ncell._airstrikeOwner = fireOwner;
+                    const ncm = critMass(nr, nc);
+                    if (ncell.count < ncm) {
+                        const countOwner = ncell.owner >= 0 ? ncell.owner : fireOwner;
+                        S.orbCount[countOwner] += (ncm - ncell.count);
+                        ncell.count = ncm;
+                        if (ncell.owner < 0) ncell.owner = countOwner;
+                    }
+                    ncell.ignite = 0;
+                    ncell.igniteOwner = -1;
+                    chainCandidates.add(nr * cfg.cols + nc);
+                    markDirty(nr, nc);
+                    return; // incoming orb discarded — the triggered explosion handles the spread
+                }
                 if (ncell.owner !== -1 && ncell.owner !== spreadOwner) { S.orbCount[ncell.owner] -= ncell.count; S.orbCount[spreadOwner] += ncell.count; ncell.owner = spreadOwner; }
                 else if (ncell.owner === -1) { ncell.owner = spreadOwner; }
                 ncell.count++; S.orbCount[spreadOwner]++;
                 markDirty(nr, nc);
-                if (ncell.count >= critMass(nr, nc)) chainCandidates.add(nr * 100 + nc);
+                if (ncell.count >= critMass(nr, nc)) chainCandidates.add(nr * cfg.cols + nc);
                 const nel = cellEl(nr, nc);
                 if (nel) { nel.classList.remove('ping'); nel.classList.add('ping'); }
             });
@@ -4998,6 +5191,10 @@ function restartGame() {
         return;
     }
 
+    // Clear any active NR targeting — if a game ended mid-target the state persists
+    // and the next game's clicks would route through nrHandleCellTarget instead of handleClick
+    nrExitTargeting();
+
     history = [];
     resetMatchStats();
     for (let i = 0; i < PCOLORS.length; i++) updateGainBadge(i, 0);
@@ -5049,9 +5246,12 @@ function listenRematchVotes() {
 
         // Update status list
         const lines = [];
+        const iconYes  = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><polyline points="20 6 9 17 4 12"/></svg>`;
+        const iconNo   = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+        const iconWait = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>`;
         for (let i = 0; i < numPlayers; i++) {
             const v = votes[i];
-            const icon = v === 'yes' ? '✓' : v === 'no' ? '✗' : '…';
+            const icon = v === 'yes' ? iconYes : v === 'no' ? iconNo : iconWait;
             lines.push(`<span style="color:${PCOLORS[i]}">${PNAMES[i]}</span> ${icon}`);
         }
         const statusEl = document.getElementById('rematch-status');
@@ -5109,6 +5309,7 @@ async function doOnlineRematch() {
     S.animating = false;
     S.over = false;
     S.moveSeq = currentSeq; // restore sequence so serializeState increments from here
+    S.pendingAbility = null; // ensure no stale ability anim fires on rematch start
     // Reset per-player timers to full for the new game
     playerTimers = timedMode ? new Array(PCOLORS.length).fill(timedSeconds * 1000) : [];
     // Reset Nuclear Reaction per-player state
@@ -5119,7 +5320,6 @@ async function doOnlineRematch() {
         S.nrBlackout    = new Array(np).fill(false);
         S.nrSurge       = new Array(np).fill(0);
         S.nrIceWall     = new Array(np).fill(false);
-        S.nrFirestorm   = new Array(np).fill(false);
         S.nrStaticField = new Array(np).fill(false);
     }
 
@@ -5224,19 +5424,30 @@ function goSetup() {
     releaseWakeLock();
     stopPlayerTimer();
     nrExitTargeting();
-    // Fully clear surge label
-    const surgeLabel = document.getElementById('nr-surge-label');
-    if (surgeLabel) {
-        surgeLabel.classList.remove('nr-surge-visible');
-        surgeLabel.textContent = '';
-    }
-    // Cancel any running canvas animations
+    // Cancel any running canvas animations and tear down the NR canvas overlay entirely.
+    // The canvas is appended to gridEl.parentElement and survives buildGridDOM() rebuilds,
+    // so we must remove it explicitly to avoid a DOM leak across sessions.
     if (_nrRafId) { cancelAnimationFrame(_nrRafId); _nrRafId = null; }
     _nrAnimations = [];
-    if (_nrCtx && _nrCanvas) _nrCtx.clearRect(0, 0, _nrCanvas.width, _nrCanvas.height);
+    if (_nrCanvas) {
+        if (_nrCtx) _nrCtx.clearRect(0, 0, _nrCanvas.width, _nrCanvas.height);
+        window.removeEventListener('resize', _resizeNrCanvas);
+        _nrCanvas.remove();
+        _nrCanvas = null;
+        _nrCtx = null;
+    }
     nuclearMode = false;
     const nmToggle = document.getElementById('nuclear-mode-toggle');
     if (nmToggle) nmToggle.classList.remove('on');
+    timedMode = false;
+    const tmToggle = document.getElementById('timed-mode-toggle');
+    if (tmToggle) tmToggle.classList.remove('on');
+    const timedRow = document.getElementById('timed-seconds-row');
+    if (timedRow) timedRow.style.display = 'none';
+    testMode = false;
+    _testSeqProgress = 0;
+    const testRow = document.getElementById('test-mode-row');
+    if (testRow) testRow.style.display = 'none';
     history = [];
     hideCombo(true);
     ballModes.fill(0);
@@ -5353,6 +5564,11 @@ window.addEventListener('resize', () => {
     clearTimeout(rTimer);
     rTimer = setTimeout(() => {
         if (document.getElementById('game').style.display !== 'none') {
+            // Exit any active NR targeting before rebuilding the grid — buildGridDOM()
+            // destroys all cell elements, which orphans the mouseenter/mouseleave hover
+            // listeners attached during nrEnterTargeting(). The player would need to
+            // cancel and re-enter targeting anyway since preview state is wiped.
+            if (_nrTargeting) nrCancelTargeting();
             buildGridDOM(); markAllDirty(); renderAll();
         }
     }, 200);
