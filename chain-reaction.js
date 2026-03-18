@@ -1557,6 +1557,8 @@ function startGame() {
 
     document.getElementById('setup').style.display = 'none';
     document.getElementById('game').style.display = 'flex';
+    const ingameRosterRow = document.getElementById('ingame-roster-row');
+    if (ingameRosterRow) ingameRosterRow.style.display = nuclearMode ? 'flex' : 'none';
     if (window.moveMusicPlayer) window.moveMusicPlayer('game-single');
     history = [];
     resetMatchStats();
@@ -4078,6 +4080,8 @@ function nrExecuteAbility(playerIdx, abilId, target, secondTarget) {
         history.push(cloneState());
         syncUndoBtn();
     }
+    // Play the ability's sound
+    if (window.sfxNR) sfxNR(abilId);
     // Record which ability fired so online opponents can play the animation on their end
     S.pendingAbility = { playerIdx, abilId, target: target ?? null, secondTarget: secondTarget ?? null };
     // Centralized pre-ability animations
@@ -5473,6 +5477,8 @@ function goSetup() {
     gameSession++; // invalidate any in-flight AI turns, chain reactions, delays
     document.getElementById('win-overlay').classList.remove('show');
     document.getElementById('game').style.display = 'none';
+    const _rorRow = document.getElementById('ingame-roster-row');
+    if (_rorRow) _rorRow.style.display = 'none';
     document.getElementById('online-lobby').classList.remove('show');
     document.getElementById('setup').style.display = 'flex';
     if (window.moveMusicPlayer) window.moveMusicPlayer('setup');
