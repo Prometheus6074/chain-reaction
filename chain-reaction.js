@@ -1304,7 +1304,7 @@ function _forceOnlineMove() {
    SETTINGS — persisted to localStorage
    ══════════════════════════════════════════════════════════════════ */
 const SETTINGS_KEY = 'cr_settings';
-const SETTINGS_DEFAULTS = { musicVol: 50, sfxVol: 55, lowGfx: false, screenShake: true, orbSkin: 'glow' };
+const SETTINGS_DEFAULTS = { musicVol: 50, sfxVol: 55, lowGfx: false, screenShake: true, orbSkin: 'glow', colorblind: false };
 
 function loadSettings() {
     try { return Object.assign({}, SETTINGS_DEFAULTS, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); }
@@ -1316,7 +1316,9 @@ function saveSettings(s) {
 function applySettings(s) {
     lowGfx = !!s.lowGfx;
     screenShake = s.screenShake !== false;
+    colorblind = !!s.colorblind;
     document.body.classList.toggle('low-gfx', lowGfx);
+    document.body.classList.toggle('colorblind', colorblind);
     document.body.classList.remove('skin-flat', 'skin-numbered');
     if (s.orbSkin === 'flat') document.body.classList.add('skin-flat');
     else if (s.orbSkin === 'numbered') document.body.classList.add('skin-numbered');
@@ -1329,12 +1331,14 @@ function syncSettingsUI(s) {
     const sv = document.getElementById('s-sfx-vol');
     const lg = document.getElementById('s-lowgfx-toggle');
     const ss = document.getElementById('s-shake-toggle');
+    const cb = document.getElementById('s-colorblind-toggle');
     const mvv = document.getElementById('s-music-val');
     const svv = document.getElementById('s-sfx-val');
     if (mv)  { mv.value = s.musicVol; mv.style.setProperty('--val', s.musicVol + '%'); }
     if (sv)  { sv.value = s.sfxVol;   sv.style.setProperty('--val', s.sfxVol + '%'); }
     if (lg)  lg.classList.toggle('on', !!s.lowGfx);
     if (ss)  ss.classList.toggle('on', s.screenShake !== false);
+    if (cb)  cb.classList.toggle('on', !!s.colorblind);
     if (mvv) mvv.textContent = s.musicVol;
     if (svv) svv.textContent = s.sfxVol;
     document.querySelectorAll('.orb-skin-btn').forEach(b =>
@@ -1344,7 +1348,9 @@ function syncSettingsUI(s) {
 const _settings = loadSettings();
 let lowGfx    = !!_settings.lowGfx;
 let screenShake = _settings.screenShake !== false;
+let colorblind  = !!_settings.colorblind;
 document.body.classList.toggle('low-gfx', lowGfx);
+document.body.classList.toggle('colorblind', colorblind);
 
 function toggleSettings() {
     const panel = document.getElementById('settings-panel');
@@ -1380,6 +1386,13 @@ function onSettingsScreenShake() {
     const btn = document.getElementById('s-shake-toggle'); if (btn) btn.classList.toggle('on', screenShake);
 }
 function toggleLowGfx() { onSettingsLowGfx(); }
+function onSettingsColorblind() {
+    const s = loadSettings(); s.colorblind = !s.colorblind; saveSettings(s);
+    colorblind = s.colorblind;
+    document.body.classList.toggle('colorblind', colorblind);
+    const btn = document.getElementById('s-colorblind-toggle'); if (btn) btn.classList.toggle('on', colorblind);
+    markAllDirty(); if (S.grid) renderAll();
+}
 function onSettingsOrbSkin(skin) {
     const s = loadSettings(); s.orbSkin = skin; saveSettings(s);
     document.body.classList.remove('skin-flat', 'skin-numbered');
@@ -1770,6 +1783,19 @@ function commitGainBadge(playerIdx) {
 /* ══════════════════════════════════════════════════════════════════
    ORB FACTORIES
    ══════════════════════════════════════════════════════════════════ */
+/* ── Colorblind icons — Lucide paths, one per player color slot (0-7) ──
+   viewBox="0 0 24 24", stroke="currentColor", fill="none"           */
+const CB_ICONS = [
+    /* 0 Red    — rocket    */ '<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>',
+    /* 1 Blue   — droplet   */ '<path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/>',
+    /* 2 Green  — leaf      */ '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>',
+    /* 3 Yellow — zap       */ '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
+    /* 4 Purple — ghost     */ '<path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"/>',
+    /* 5 Cyan   — snowflake */ '<line x1="2" x2="22" y1="12" y2="12"/><line x1="12" x2="12" y1="2" y2="22"/><path d="m20 16-4-4 4-4"/><path d="m4 8 4 4-4 4"/><path d="m16 4-4 4-4-4"/><path d="m8 20 4-4 4 4"/>',
+    /* 6 Orange — flame     */ '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>',
+    /* 7 Lime   — bug       */ '<path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6z"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 4-4"/><path d="M17.47 9c1.93-.2 3.53-1.9 3.53-4"/><path d="M18 13h4"/><path d="M21 21c0-2.1-1.7-3.9-4-4"/>',
+];
+
 function makeOrbEl(col, sz, dx, dy, wobbleStagger) {
     const elapsed = Date.now() - (window._orbAnimEpoch || 0);
     const wobbleDelay = -(((elapsed - wobbleStagger) % 2400 + 2400) % 2400);
@@ -1822,6 +1848,12 @@ function renderCell(r, c) {
     layer.innerHTML = '';
     el.classList.remove('near-crit', 'cell-glow');
     el.style.removeProperty('--cell-glow-color');
+    el.style.removeProperty('--cb-cell-color');
+
+    // Capture the previous count before removing stale icon — used to trigger pop animation
+    const existingCbIcon = el.querySelector('.cb-icon');
+    const prevCbCount = existingCbIcon ? +existingCbIcon.dataset.count : -1;
+    if (existingCbIcon) existingCbIcon.remove();
 
     // NR badges — handled before the count check so that:
     // (a) the ignite countdown badge persists on empty cells (IGN×2 → IGN×1 → gone)
@@ -1866,30 +1898,32 @@ function renderCell(r, c) {
     const orbSz = Math.max(7, Math.min(Math.floor(cellSz * 0.26), 17));
     const show = Math.min(surviving, 3);
 
-    // Rotating ring container — anchored at exact cell center
-    const ring = document.createElement('div');
-    ring.className = 'orb-ring';
-    const elapsed = Date.now() - (window._orbAnimEpoch || 0);
-    const ringSpinDelay = -(elapsed % 4000);
-    ring.style.animationDelay = `${ringSpinDelay}ms`;
+    // Rotating ring container — suppressed entirely when colorblind mode is on
+    if (!colorblind) {
+        const ring = document.createElement('div');
+        ring.className = 'orb-ring';
+        const elapsed = Date.now() - (window._orbAnimEpoch || 0);
+        const ringSpinDelay = -(elapsed % 4000);
+        ring.style.animationDelay = `${ringSpinDelay}ms`;
 
-    // Scale orbit positions to always stay within cell bounds
-    const rawPositions = ORB_POS[show];
-    const maxRawRadius = Math.max(...rawPositions.map(([dx, dy]) => Math.sqrt(dx * dx + dy * dy)), 0.001);
-    const maxAllowedRadius = Math.max(1, (cellSz / 2) - (orbSz / 2) - 2);
-    const posScale = Math.min(1, maxAllowedRadius / maxRawRadius);
+        // Scale orbit positions to always stay within cell bounds
+        const rawPositions = ORB_POS[show];
+        const maxRawRadius = Math.max(...rawPositions.map(([dx, dy]) => Math.sqrt(dx * dx + dy * dy)), 0.001);
+        const maxAllowedRadius = Math.max(1, (cellSz / 2) - (orbSz / 2) - 2);
+        const posScale = Math.min(1, maxAllowedRadius / maxRawRadius);
 
-    const wobbleStagger = [0, 200, 400];
-    rawPositions.forEach(([dx, dy], i) =>
-        ring.appendChild(makeOrbEl(col, orbSz, dx * posScale, dy * posScale, wobbleStagger[i])));
-    layer.appendChild(ring);
+        const wobbleStagger = [0, 200, 400];
+        rawPositions.forEach(([dx, dy], i) =>
+            ring.appendChild(makeOrbEl(col, orbSz, dx * posScale, dy * posScale, wobbleStagger[i])));
+        layer.appendChild(ring);
 
-    {
-        const badge = document.createElement('div');
-        badge.className = 'orb-count-badge' + (surviving > 3 ? ' always-show' : '');
-        badge.style.cssText = `font-size:${Math.max(8, Math.floor(cellSz * .18))}px;color:${col};font-family:'Orbitron',sans-serif;font-weight:700;text-shadow:0 0 4px ${col};pointer-events:none;line-height:1;`;
-        badge.textContent = surviving;
-        layer.appendChild(badge);
+        {
+            const badge = document.createElement('div');
+            badge.className = 'orb-count-badge' + (surviving > 3 ? ' always-show' : '');
+            badge.style.cssText = `font-size:${Math.max(8, Math.floor(cellSz * .18))}px;color:${col};font-family:'Orbitron',sans-serif;font-weight:700;text-shadow:0 0 4px ${col};pointer-events:none;line-height:1;`;
+            badge.textContent = surviving;
+            layer.appendChild(badge);
+        }
     }
     if (surviving === cm - 1) el.classList.add('near-crit');
 
@@ -1897,6 +1931,27 @@ function renderCell(r, c) {
     if (!S.over && data.owner === S.current) {
         el.classList.add('cell-glow');
         el.style.setProperty('--cell-glow-color', col);
+    }
+
+    // Colorblind icon — anchored to the cell, not the orb ring, so it stays still.
+    // Count label uses the player's color and pops whenever the value changes.
+    if (colorblind && data.owner >= 0) {
+        const iconIdx = ALL_COLORS.indexOf(PCOLORS[data.owner]);
+        if (iconIdx >= 0 && CB_ICONS[iconIdx]) {
+            // Store player color as a CSS variable so the marching-ants near-crit
+            // border can use it without needing extra JS
+            el.style.setProperty('--cb-cell-color', col);
+            const cbIcon = document.createElement('div');
+            cbIcon.className = 'cb-icon' + (surviving > 1 ? ' cb-icon-counted' : '');
+            cbIcon.dataset.count = surviving;
+            const countChanged = surviving !== prevCbCount && surviving > 1;
+            const countLabel = surviving > 1
+                ? `<span class="cb-icon-count${countChanged ? ' cb-count-pop' : ''}" style="color:${col};text-shadow:0 0 5px ${col}88;">×${surviving}</span>`
+                : '';
+            const svgStyle = `style="color:${col};filter:drop-shadow(0 0 3px ${col}99)"`;
+            cbIcon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${col}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" ${svgStyle}>${CB_ICONS[iconIdx]}</svg>${countLabel}`;
+            el.appendChild(cbIcon);
+        }
     }
 
 }
