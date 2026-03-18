@@ -3580,3 +3580,97 @@ body.colorblind .cell.near-crit::after {
             100% 0 / 3px 12px repeat-y;
     animation: cbMarch 400ms linear infinite;
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   COLORBLIND MODE — Lucide icon anchored to the cell
+   ══════════════════════════════════════════════════════════════════ */
+@keyframes cbBreathe {
+    0%, 100% { opacity: 0.72; transform: scale(1);    }
+    50%       { opacity: 1;    transform: scale(1.12); }
+}
+@keyframes cbCountPop {
+    0%   { transform: scale(0.5); opacity: 0; }
+    65%  { transform: scale(1.3); opacity: 1; }
+    100% { transform: scale(1);   opacity: 1; }
+}
+.cb-count-pop {
+    animation: cbCountPop 280ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+.cb-icon {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    z-index: 2;
+    animation: cbBreathe 2.8s ease-in-out infinite;
+}
+.cb-icon svg {
+    width: 52%;
+    height: 52%;
+}
+.cb-icon.cb-icon-counted {
+    flex-direction: row;
+    gap: 2px;
+}
+.cb-icon.cb-icon-counted svg {
+    width: 38%;
+    height: 38%;
+}
+.cb-icon-count {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 0.55em;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.02em;
+}
+
+/* ── Near-crit: marching ants border ── */
+@keyframes cbMarch {
+    from { background-position: 0 0,    0 100%,    0 0,     100% 0; }
+    to   { background-position: 12px 0, -12px 100%, 0 12px, 100% -12px; }
+}
+body.colorblind .cell.near-crit::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 3;
+    border-radius: inherit;
+    background:
+        repeating-linear-gradient(90deg, var(--cb-cell-color, #fff) 0 6px, transparent 6px 12px)
+            0 0 / 12px 3px repeat-x,
+        repeating-linear-gradient(90deg, var(--cb-cell-color, #fff) 0 6px, transparent 6px 12px)
+            0 100% / 12px 3px repeat-x,
+        repeating-linear-gradient(0deg,  var(--cb-cell-color, #fff) 0 6px, transparent 6px 12px)
+            0 0 / 3px 12px repeat-y,
+        repeating-linear-gradient(0deg,  var(--cb-cell-color, #fff) 0 6px, transparent 6px 12px)
+            100% 0 / 3px 12px repeat-y;
+    animation: cbMarch 400ms linear infinite;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   SANDBOX MODE — character cycle button styling
+   ══════════════════════════════════════════════════════════════════ */
+.test-color-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    margin-left: 4px;
+    padding: 0;
+    vertical-align: middle;
+    opacity: 0.85;
+    transition: opacity 0.15s, transform 0.15s;
+    color: #000;
+    flex-shrink: 0;
+}
+.test-color-btn:hover {
+    opacity: 1;
+    transform: rotate(45deg) scale(1.15);
+}

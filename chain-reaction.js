@@ -62,8 +62,7 @@ let _timedInterval = null;
 
 /* ── Test Mode ── */
 let testMode = false;
-const _TEST_SEQUENCE = [6, 9, 6, 9]; // grid sizes to click in order
-let _testSeqProgress = 0;
+
 
 /* ── Nuclear Reaction Mode ── */
 let nuclearMode = false;
@@ -1849,8 +1848,6 @@ function renderCell(r, c) {
     el.classList.remove('near-crit', 'cell-glow');
     el.style.removeProperty('--cell-glow-color');
     el.style.removeProperty('--cb-cell-color');
-
-    // Capture the previous count before removing stale icon — used to trigger pop animation
     const existingCbIcon = el.querySelector('.cb-icon');
     const prevCbCount = existingCbIcon ? +existingCbIcon.dataset.count : -1;
     if (existingCbIcon) existingCbIcon.remove();
@@ -1938,8 +1935,6 @@ function renderCell(r, c) {
     if (colorblind && data.owner >= 0) {
         const iconIdx = ALL_COLORS.indexOf(PCOLORS[data.owner]);
         if (iconIdx >= 0 && CB_ICONS[iconIdx]) {
-            // Store player color as a CSS variable so the marching-ants near-crit
-            // border can use it without needing extra JS
             el.style.setProperty('--cb-cell-color', col);
             const cbIcon = document.createElement('div');
             cbIcon.className = 'cb-icon' + (surviving > 1 ? ' cb-icon-counted' : '');
@@ -4861,39 +4856,28 @@ async function nrProcessTurnStartCells(session, isNewRound) {
 /* ── Setup toggle ── */
 function setNuclearMode(on) {
     nuclearMode = on;
+    const sandboxRow = document.getElementById('test-mode-row');
+    if (sandboxRow) sandboxRow.style.display = on ? '' : 'none';
 }
 
 /* ══════════════════════════════════════════════════════════════════
    TEST MODE
    ══════════════════════════════════════════════════════════════════ */
 function _checkTestSequence(gridSize) {
-    if (gridSize === _TEST_SEQUENCE[_testSeqProgress]) {
-        _testSeqProgress++;
-        if (_testSeqProgress >= _TEST_SEQUENCE.length) {
-            _testSeqProgress = 0;
-            const row = document.getElementById('test-mode-row');
-            if (row) {
-                row.style.display = '';
-                // Brief glow flash to acknowledge unlock
-                row.style.transition = 'opacity 0.15s';
-                row.style.opacity = '0';
-                setTimeout(() => { row.style.opacity = '1'; }, 50);
-            }
-        }
-    } else {
-        // Wrong key — reset but check if this click starts a new sequence
-        _testSeqProgress = gridSize === _TEST_SEQUENCE[0] ? 1 : 0;
-    }
 }
 
 function startTestMode() {
-    // Force exactly 2 human players: Red (slot 0) and Blue (slot 1)
-    ballModes.fill(0);
-    ballOrder.length = 0;
-    ballColors[0] = ALL_COLORS[0];
-    ballColors[1] = ALL_COLORS[1];
-    ballModes[0] = 1; ballOrder.push(0);
-    ballModes[1] = 1; ballOrder.push(1);
+    // Sandbox mode — use whatever players are configured, but force Nuclear Reaction on.
+    // If no players are selected yet, default to 2 human players (Red + Blue).
+    if (ballOrder.length < 2) {
+        ballModes.fill(0);
+        ballOrder.length = 0;
+        ballColors[0] = ALL_COLORS[0];
+        ballColors[1] = ALL_COLORS[1];
+        ballModes[0] = 1; ballOrder.push(0);
+        ballModes[1] = 1; ballOrder.push(1);
+        syncBallGrid();
+    }
 
     // Force nuclear mode on
     nuclearMode = true;
@@ -4914,6 +4898,10 @@ function cycleTestColor(playerIdx) {
         next = (next + 1) % ALL_COLORS.length;
     PCOLORS[playerIdx] = ALL_COLORS[next];
     ballColors[ballOrder[playerIdx]] = ALL_COLORS[next];
+    // Reset ability index so the new character starts at ability 1
+    if (S.nrAbilityIdx) S.nrAbilityIdx[playerIdx] = 0;
+    // Reset meter so player can use the new character immediately
+    if (S.nrMeter) S.nrMeter[playerIdx] = NR_METER_MAX;
     markAllDirty();
     buildPlayerStrip();
     renderAll();
@@ -5513,7 +5501,6 @@ function goSetup() {
     const timedRow = document.getElementById('timed-seconds-row');
     if (timedRow) timedRow.style.display = 'none';
     testMode = false;
-    _testSeqProgress = 0;
     const testRow = document.getElementById('test-mode-row');
     if (testRow) testRow.style.display = 'none';
     history = [];
