@@ -83,14 +83,7 @@
         </label>
         <button class="s-toggle" id="timed-mode-toggle" onclick="this.classList.toggle('on'); setTimedMode(this.classList.contains('on'))" aria-label="Toggle timed mode"></button>
       </div>
-      <div class="mode-row" id="timed-seconds-row" style="display:none">
-        <span class="mode-label" style="padding-left:18px;font-size:11px;color:var(--dim)">Time per player</span>
-        <div style="display:flex;align-items:center;gap:6px">
-          <button class="pill pill-sm active" data-secs="60"  onclick="setTimedSecsPill(this,60)">1 min</button>
-          <button class="pill pill-sm"        data-secs="180" onclick="setTimedSecsPill(this,180)">3 min</button>
-          <button class="pill pill-sm"        data-secs="300" onclick="setTimedSecsPill(this,300)">5 min</button>
-        </div>
-      </div>
+
       <div class="mode-row">
         <label class="mode-label">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
@@ -98,11 +91,15 @@
         </label>
         <button class="s-toggle" id="nuclear-mode-toggle" onclick="this.classList.toggle('on'); setNuclearMode(this.classList.contains('on'))" aria-label="Toggle nuclear reaction mode"></button>
       </div>
-      <div class="mode-row" id="test-mode-row" style="display:none">
-        <button class="start-btn" id="test-mode-btn" onclick="startTestMode()" style="padding:4px 14px;font-size:11px;min-width:0;height:auto;letter-spacing:0.06em">Sandbox</button>
-      </div>
     </div>
-    <button class="start-btn" id="start-btn" onclick="startGame()" disabled>Start Game</button>
+    <div id="start-btn-row">
+      <button class="start-btn timed-btn" id="timed-btn" onclick="cycleTimedSeconds()">
+        <span id="timed-btn-label">1 min</span>
+        <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:4px;vertical-align:-1px;opacity:0.7"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><path d="M21 3 14 10"/><path d="M3 21 10 14"/></svg>
+      </button>
+      <button class="start-btn" id="start-btn" onclick="startGame()" disabled>Start Game</button>
+      <button class="start-btn sandbox-btn" id="sandbox-btn" onclick="startTestMode()">Sandbox</button>
+    </div>
     <div class="or-divider"><span>or</span></div>
     <button class="online-btn" onclick="showOnlineLobby()">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>

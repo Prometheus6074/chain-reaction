@@ -312,6 +312,104 @@ input, textarea, select,
     cursor: not-allowed;
 }
 
+/* ── Start + Sandbox button row ── */
+#start-btn-row {
+    display: flex;
+    gap: 0;
+    width: 100%;
+    overflow: hidden;
+}
+#start-btn-row #start-btn {
+    border-radius: 9px;
+    transition: border-radius .3s ease, all .2s;
+    flex: 1;
+}
+#start-btn-row.sandbox-open #start-btn {
+    border-radius: 9px 0 0 9px;
+}
+#start-btn-row.timed-open #start-btn {
+    border-radius: 0 9px 9px 0;
+}
+#start-btn-row.sandbox-open.timed-open #start-btn {
+    border-radius: 0;
+}
+.sandbox-btn {
+    width: 0;
+    min-width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    opacity: 0;
+    border-left: none;
+    border-radius: 0 9px 9px 0;
+    overflow: hidden;
+    transition: width .32s cubic-bezier(.34,1.56,.64,1),
+                opacity .22s ease,
+                padding .32s ease;
+    pointer-events: none;
+    white-space: nowrap;
+    background: linear-gradient(135deg, #1fd97a11, #0a3322);
+    border-color: #1fd97a55;
+    color: #1fd97a;
+    font-size: 12px;
+}
+.sandbox-btn.sandbox-visible {
+    width: 36%;
+    min-width: 0;
+    padding-left: 12px;
+    padding-right: 12px;
+    opacity: 1;
+    pointer-events: all;
+}
+.sandbox-btn.sandbox-visible:hover {
+    background: linear-gradient(135deg, #1fd97a22, #0a3322);
+    border-color: #1fd97a;
+    box-shadow: 0 0 18px #1fd97a33;
+}
+
+/* Both side buttons open: shrink each to 25% so Start Game keeps 50% */
+#start-btn-row.sandbox-open.timed-open .sandbox-btn {
+    width: 25%;
+}
+#start-btn-row.sandbox-open.timed-open .timed-btn {
+    width: 25%;
+}
+/* Timed button — appears on the left */
+.timed-btn {
+    width: 0;
+    min-width: 0;
+    padding-left: 0;
+    padding-right: 0;
+    opacity: 0;
+    border-right: none;
+    border-radius: 9px 0 0 9px;
+    overflow: hidden;
+    transition: width .32s cubic-bezier(.34,1.56,.64,1),
+                opacity .22s ease,
+                padding .32s ease;
+    pointer-events: none;
+    white-space: nowrap;
+    background: linear-gradient(135deg, #ffcc0011, #2a1a00);
+    border-color: #ffcc0055;
+    color: #ffcc00;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.timed-btn.timed-visible {
+    width: 36%;
+    min-width: 0;
+    padding-left: 12px;
+    padding-right: 12px;
+    opacity: 1;
+    pointer-events: all;
+}
+.timed-btn.timed-visible:hover {
+    background: linear-gradient(135deg, #ffcc0022, #2a1a00);
+    border-color: #ffcc00;
+    box-shadow: 0 0 18px #ffcc0033;
+}
+
 /* ── OR DIVIDER ── */
 .or-divider {
     display: flex;

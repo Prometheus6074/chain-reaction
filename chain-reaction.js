@@ -56,7 +56,7 @@ let comboHideTimer = null;
 
 /* ── Game mode flags ── */
 let timedMode    = false;   // per-player countdown clock
-let timedSeconds = 180;     // default 3 min per player
+let timedSeconds = 60;      // default 1 min per player
 let playerTimers = [];      // remaining ms per player
 let _timedInterval = null;
 
@@ -646,7 +646,7 @@ function updateWaitingRoomUI(room) {
             const statusEl = document.getElementById('ol-status');
             statusEl.parentNode.insertBefore(timedBadge, statusEl.nextSibling);
         }
-        const mins = Math.floor((room.config.timedSeconds || 180) / 60);
+        const mins = Math.floor((room.config.timedSeconds || 60) / 60);
         timedBadge.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Timed Mode &nbsp;·&nbsp; ${mins} min per player`;
         timedBadge.style.display = '';
     } else if (timedBadge) {
@@ -1056,7 +1056,7 @@ function launchOnlineGame(room) {
     IS_HARD_AI = new Array(np).fill(false);
     cfg = { rows: room.config.rows, cols: room.config.cols };
     timedMode    = !!room.config.timedMode;
-    timedSeconds = room.config.timedSeconds || 180;
+    timedSeconds = room.config.timedSeconds || 60;
     nuclearMode  = !!room.config.nuclearMode;
 
     document.getElementById('online-lobby').classList.remove('show');
@@ -2384,8 +2384,18 @@ function renderPlayerTimers() {
 /* ── Game mode setters (called from HTML) ── */
 function setTimedMode(on) {
     timedMode = on;
-    const row = document.getElementById('timed-seconds-row');
-    if (row) row.style.display = on ? 'flex' : 'none';
+    const timedBtn = document.getElementById('timed-btn');
+    if (timedBtn) timedBtn.classList.toggle('timed-visible', on);
+    const startRow = document.getElementById('start-btn-row');
+    if (startRow) startRow.classList.toggle('timed-open', on);
+}
+
+function cycleTimedSeconds() {
+    const steps = [60, 180, 300];
+    const cur = steps.indexOf(timedSeconds);
+    timedSeconds = steps[(cur + 1) % steps.length];
+    const lbl = document.getElementById('timed-btn-label');
+    if (lbl) lbl.textContent = timedSeconds === 60 ? '1 min' : timedSeconds === 180 ? '3 min' : '5 min';
 }
 function setTimedSeconds(val) {
     timedSeconds = parseInt(val) || 180;
@@ -4940,8 +4950,12 @@ async function nrProcessTurnStartCells(session, isNewRound) {
 /* ── Setup toggle ── */
 function setNuclearMode(on) {
     nuclearMode = on;
-    const sandboxRow = document.getElementById('test-mode-row');
-    if (sandboxRow) sandboxRow.style.display = on ? '' : 'none';
+    const sandboxBtn = document.getElementById('sandbox-btn');
+    if (sandboxBtn) sandboxBtn.classList.toggle('sandbox-visible', on);
+    const startRow = document.getElementById('start-btn-row');
+    if (startRow) startRow.classList.toggle('sandbox-open', on);
+    const nrBar = document.getElementById('nr-targeting-bar');
+    if (nrBar) nrBar.classList.toggle('nr-mode', !!on);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -5589,8 +5603,6 @@ function goSetup() {
     const timedRow = document.getElementById('timed-seconds-row');
     if (timedRow) timedRow.style.display = 'none';
     testMode = false;
-    const testRow = document.getElementById('test-mode-row');
-    if (testRow) testRow.style.display = 'none';
     history = [];
     hideCombo(true);
     ballModes.fill(0);
