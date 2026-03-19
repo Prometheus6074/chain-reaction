@@ -745,6 +745,10 @@ async function leaveRoom() {
 function _doLocalLeave() {
     stopRoomListeners();
     stopOnlineTurnTimer();
+    const _leaveTimerEl = document.getElementById('turn-timer');
+    if (_leaveTimerEl) _leaveTimerEl.classList.remove('online-mode', 'visible');
+    const _leaveHintEl = document.getElementById('online-turn-hint');
+    if (_leaveHintEl) _leaveHintEl.classList.remove('online-mode', 'visible');
     const wasOnline = onlineMode;
     onlineMode = false;
     resetOnlineState();
@@ -1071,6 +1075,10 @@ function launchOnlineGame(room) {
     updateOnlineInteractivity();
     setupChat();
     if (nuclearMode) nrCanvasInit();
+    const _timerEl = document.getElementById('turn-timer');
+    if (_timerEl) _timerEl.classList.add('online-mode');
+    const _hintEl = document.getElementById('online-turn-hint');
+    if (_hintEl) _hintEl.classList.add('online-mode');
 
     requestWakeLock();
     startPlayerTimer();
@@ -1182,10 +1190,10 @@ function launchOnlineGame(room) {
 /* ── Enforce turn in online mode ── */
 function updateOnlineInteractivity() {
     const hint = document.getElementById('online-turn-hint');
-    if (!onlineMode) { hint.textContent = ''; return; }
+    if (!onlineMode) { hint.classList.remove('visible'); return; }
     if (S.over) {
         setGridInteractive(false);
-        hint.textContent = '';
+        hint.classList.remove('visible');
         stopOnlineTurnTimer();
         return;
     }
@@ -1195,7 +1203,7 @@ function updateOnlineInteractivity() {
     hint.innerHTML = myTurn
         ? `${playIcon}Your turn — click a cell`
         : IS_AI[S.current] ? '' : `Waiting for ${escapeHtml(PNAMES[S.current])}…`;
-    hint.className = 'online-turn-hint' + (myTurn ? ' your-turn' : '');
+    hint.className = 'online-turn-hint online-mode visible' + (myTurn ? ' your-turn' : '');
     startOnlineTurnTimer();
 }
 
@@ -1210,9 +1218,9 @@ function startOnlineTurnTimer() {
     const timerEl = document.getElementById('turn-timer');
     const barEl   = document.getElementById('turn-timer-bar');
     const hint    = document.getElementById('online-turn-hint');
-    if (!timerEl || !barEl || !deadline) { if (timerEl) timerEl.style.display = 'none'; return; }
+    if (!timerEl || !barEl || !deadline) { if (timerEl) timerEl.classList.remove('visible'); return; }
 
-    timerEl.style.display = '';
+    timerEl.classList.add('visible');
     timerEl.classList.remove('urgent');
 
     const tick = () => {
@@ -1257,7 +1265,7 @@ function stopOnlineTurnTimer() {
         _onlineTurnTimerInterval = null;
     }
     const timerEl = document.getElementById('turn-timer');
-    if (timerEl) { timerEl.style.display = 'none'; timerEl.classList.remove('urgent'); }
+    if (timerEl) { timerEl.classList.remove('visible', 'urgent'); }
 }
 
 function _forceOnlineMove() {
@@ -1559,6 +1567,8 @@ function startGame() {
     document.getElementById('game').style.display = 'flex';
     const ingameRosterRow = document.getElementById('ingame-roster-row');
     if (ingameRosterRow) ingameRosterRow.style.display = nuclearMode ? 'flex' : 'none';
+    const nrBar = document.getElementById('nr-targeting-bar');
+    if (nrBar) nrBar.classList.toggle('nr-mode', !!nuclearMode);
     if (window.moveMusicPlayer) window.moveMusicPlayer('game-single');
     history = [];
     resetMatchStats();
@@ -1708,8 +1718,9 @@ function buildPlayerStrip() {
                  <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6"/><path d="M21.34 15.57a10 10 0 1 1-.57-8.38"/></svg>
                </button>`
             : '';
+        const displayName = nuclearMode && nrCharName ? nrCharName : PNAMES[i];
         card.innerHTML = `
-      <div class="pn" style="color:${PCOLORS[i]}">${PNAMES[i]}${aiChip}${youChip}${testColorBtn}</div>
+      <div class="pn" style="color:${PCOLORS[i]}">${displayName}${aiChip}${youChip}${testColorBtn}</div>
       <div class="pc-wrap">
         <span class="pc" id="porbs${i}">0</span>
         <span class="gain-badge" id="gb${i}"></span>
@@ -1720,12 +1731,13 @@ function buildPlayerStrip() {
         <div class="nr-meter-bar" id="nr-meter-bar${i}"></div>
       </div>
       <div class="nr-char-row" id="nr-char-row${i}" style="display:none">
-        <span class="nr-char-name">${nrCharName}</span>
         <span class="nr-ability-name" id="nr-ability-name${i}">${nrAbilityName}</span>
       </div>`;
         if (nuclearMode) {
             card.addEventListener('click', () => onPlayerCardClick(i));
             card.style.cursor = 'pointer';
+            card.addEventListener('mouseenter', () => nrShowAbilityTooltip(i, card));
+            card.addEventListener('mouseleave', nrHideAbilityTooltip);
         }
         strip.appendChild(card);
     }
@@ -3714,6 +3726,61 @@ function nrCurrentAbilityId(playerIdx) {
     return NR_CHARS[charIdx].abilities[abilIdx];
 }
 
+/* ── Ability tooltip on player card hover ── */
+function nrShowAbilityTooltip(playerIdx, cardEl) {
+    if (!nuclearMode || !S.nrMeter) return;
+    if ((S.nrMeter[playerIdx] || 0) < NR_METER_MAX) return;
+    if (IS_AI[playerIdx]) return;
+    // Don't override a live targeting session
+    if (_nrTargeting) return;
+
+    const abilId = nrCurrentAbilityId(playerIdx);
+    if (!abilId) return;
+
+    const hintMap = {
+        carpet_bomb:     'Click a row to destroy 1 orb from every enemy cell in it',
+        airstrike:       'Click any cell to force it to explode in your colour',
+        detonation_wave: 'Near-critical enemy cells each lose 1 orb and convert to your colour',
+        undertow:        'Drains 1 orb from each adjacent enemy and transfers it to your side',
+        tidal_wave:      'Click a column to convert all 1–2 orb enemy cells in it',
+        riptide:         'Any edge containing one of your cells is fully claimed',
+        overgrowth:      'Click one of your cells to claim empty and boost cells in the 3×3 area',
+        creep:           'Claims all empty and 1-orb enemy cells adjacent to your cells',
+        pandemic:        'All enemies lose 1 orb; all your cells below critical gain 1',
+        surge:           'Activates for 3 rounds — chains of 5+ grant a free extra turn',
+        static_field:    'Your cells cannot be captured by enemy chains this turn',
+        blackout:        'Click an opponent to skip their next turn and play again',
+        phantom_step:    'Teleports one of your cells to any empty cell on the board',
+        swap:            'Swaps the contents of any two cells on the board',
+        void_rift:       'Erases all enemy orbs and adds +2 to your cells in the 2×2 area',
+        permafrost:      'Freezes a target cell and its neighbours for 2 rounds',
+        ice_wall:        'Your cells cannot be captured or frozen this turn',
+        absolute_zero:   'Freezes every near-critical enemy cell for 3 rounds',
+        ignite:          "Marks a cell to explode in your colour: 2 rounds if yours, 1 if enemy's",
+        ember:           'Marks your cells in the 2×2 area as traps — each repels the next enemy chain',
+        encircle:        'Counts Napalm neighbours in all 8 directions and applies effects per count',
+        corrode:         'Reduces every enemy cell in the 2×2 area to 1 orb',
+        infect:          'Click an enemy cell — when it explodes, the spread converts to your colour',
+        decay:           'Click an enemy cell to start a spreading conversion to your colour',
+    };
+
+    const bar   = document.getElementById('nr-targeting-bar');
+    const label = document.getElementById('nr-targeting-label');
+    if (!bar || !label) return;
+
+    label.textContent = `${NR_ABILITIES[abilId].name} — ${hintMap[abilId] || ''}`;
+    bar.classList.add('active');
+    bar.dataset.preview = '1'; // mark so we know it's a preview, not a live targeting session
+}
+
+function nrHideAbilityTooltip() {
+    const bar = document.getElementById('nr-targeting-bar');
+    if (bar && bar.dataset.preview === '1') {
+        bar.classList.remove('active');
+        delete bar.dataset.preview;
+    }
+}
+
 /* ── Advance ability queue for a player after use ── */
 function nrAdvanceAbility(playerIdx) {
     if (!S.nrAbilityIdx) return;
@@ -3726,6 +3793,11 @@ function nrAdvanceAbility(playerIdx) {
 /* ── Player card click → try to activate ability ── */
 function onPlayerCardClick(playerIdx) {
     if (!nuclearMode || S.over || S.animating) return;
+    // Clicking the active player's own card while targeting → cancel
+    if (_nrTargeting && playerIdx === _nrTargeting.player) {
+        nrCancelTargeting();
+        return;
+    }
     // If we're in player-targeting mode, route to that handler
     if (_nrTargeting && NR_ABILITIES[_nrTargeting.abilId].targeting === 'player') {
         nrHandlePlayerTarget(playerIdx);
@@ -3753,43 +3825,47 @@ function onPlayerCardClick(playerIdx) {
 
 /* ── Targeting mode ── */
 function nrEnterTargeting(player, abilId, phase, firstCell) {
+    nrHideAbilityTooltip();
     _nrTargeting = { player, abilId, phase, firstCell };
     document.getElementById('grid').classList.add('nr-targeting');
+    const _enterCard = document.getElementById(`pc${player}`);
+    if (_enterCard) _enterCard.classList.add('nr-cancelling');
     const bar = document.getElementById('nr-targeting-bar');
     const label = document.getElementById('nr-targeting-label');
     const cancelBtn = document.getElementById('nr-cancel-btn');
+    if (cancelBtn) cancelBtn.style.display = 'none'; // cancel is now via card click
     const t = NR_ABILITIES[abilId].targeting;
     const abilName = NR_ABILITIES[abilId].name;
     if (label) {
         const hints = {
-            airstrike:       'Airstrike — click any cell to force it to explode in your color',
-            carpet_bomb:     'Carpet Bomb — hover to highlight the row, click to destroy 1 orb from every enemy cell in it',
+            airstrike:       'Airstrike — click any cell to force it to explode in your colour',
+            carpet_bomb:     'Carpet Bomb — click a row to destroy 1 orb from every enemy cell in it',
             detonation_wave: null,
             undertow:        null,
             riptide:         null,
-            tidal_wave:      'Tidal Wave — hover to highlight the column, click to convert all 1–2 orb enemies in it',
+            tidal_wave:      'Tidal Wave — click a column to convert all 1–2 orb enemy cells in it',
             creep:           null,
-            overgrowth:      'Overgrowth — hover to preview the 3×3 area; only valid if it contains one of your cells. Claims empty cells and adds +1 to your cells below near-critical',
+            overgrowth:      'Overgrowth — click one of your cells to claim empty and boost your cells in the 3×3 area around it',
             pandemic:        null,
-            surge:           'Surge — activate for 3 rounds: hitting a 5+ chain grants a free extra turn, up to 2 per turn',
-            static_field:    'Static Field — activate to absorb enemy chains this turn. Immune to Pandemic — gains +1 orb instead of losing one',
-            blackout:        'Blackout — click an opponent\'s player card to skip their next turn, activate Surge for 3 rounds, and immediately play another turn',
-            phantom_step:    phase === 1 ? 'Phantom Step — click one of your cells to move it' : 'Phantom Step — click an empty cell as the destination',
-            swap:            phase === 1 ? 'Swap — click the first cell to swap' : 'Swap — click the second cell (triggers explosion check)',
-            void_rift:       'Void Rift — hover to preview the 2×2 area. Erases all enemy orbs inside and adds +2 to each of your own cells (triggers explosion check)',
-            permafrost:      'Permafrost — click an enemy cell to freeze it and its neighbors for 2 rounds. Your chains can thaw them and detonate in your color',
-            ice_wall:        'Ice Wall — activate to make your cells unconvertible until your next turn',
+            surge:           'Surge — activates for 3 rounds. Chains of 5+ grant a free extra turn',
+            static_field:    'Static Field — activates this turn. Your cells cannot be captured by enemy chains',
+            blackout:        'Blackout — click an opponent to skip their next turn and play again',
+            phantom_step:    phase === 1 ? 'Phantom Step — click one of your cells to move' : 'Phantom Step — click an empty cell as the destination',
+            swap:            phase === 1 ? 'Swap — click the first cell' : 'Swap — click the second cell',
+            void_rift:       'Void Rift — click to erase all enemy orbs and add +2 to your cells in the 2×2 area',
+            permafrost:      'Permafrost — click an enemy cell to freeze it and its neighbours for 2 rounds',
+            ice_wall:        'Ice Wall — activates this turn. Your cells cannot be captured or frozen',
             absolute_zero:   null,
-            ignite:          'Ignite — click your own cell: 2 auto-explosions in your color. Click an enemy cell: 1 forced explosion in your color next turn. If a chain touches it first, it immediately explodes in your color',
-            ember:           'Ember — hover for 2×2 preview; click to permanently mark your cells in the area as traps. Each marked cell repels the next enemy chain that hits it, then the mark is consumed',
+            ignite:          'Ignite — click a cell to mark it. Explodes in your colour in 2 rounds if yours, 1 if enemy\'s',
+            ember:           'Ember — click to mark your cells in the 2×2 area as traps. Each repels the next enemy chain',
             encircle:        null,
-            corrode:         'Corrode — hover to preview the 2×2 area, click to reduce every enemy cell inside it to 1 orb',
-            infect:          'Infect — click an enemy cell to mark it; when it explodes the spread converts to your color',
-            decay:           'Decay — click any enemy cell: converts it to 2 orbs of yours, then BFS spreads to every connected enemy cell — 1-orb cells convert to 2-orb Venom cells, 2+ orb cells lose 1 orb. Spread never stops',
+            corrode:         'Corrode — click to reduce every enemy cell in the 2×2 area to 1 orb',
+            infect:          'Infect — click an enemy cell. When it explodes, the spread converts to your colour',
+            decay:           'Decay — click an enemy cell to start the spread',
         };
         label.textContent = hints[abilId] || `${NR_ABILITIES[abilId].name} — select a target`;
     }
-    if (bar) bar.style.display = '';
+    if (bar) bar.classList.add('active');
     if (cancelBtn) cancelBtn.style.display = '';
     setGridInteractive(true);
     if (abilId === 'void_rift') {
@@ -3911,6 +3987,10 @@ function _nrColUnhover() {
 function nrExitTargeting() {
     _nrTargeting = null;
     document.getElementById('grid').classList.remove('nr-targeting');
+    for (let _ci = 0; _ci < PCOLORS.length; _ci++) {
+        const _cc = document.getElementById(`pc${_ci}`);
+        if (_cc) _cc.classList.remove('nr-cancelling');
+    }
     document.querySelectorAll('.cell').forEach(el => {
         el.classList.remove('nr-valid', 'nr-invalid', 'nr-selected', 'nr-void-preview', 'nr-ember-preview', 'nr-row-preview', 'nr-col-preview', 'nr-overgrowth-preview', 'nr-corrode-preview');
         el.removeEventListener('mouseenter', _nrVoidRiftHover);
@@ -3932,7 +4012,7 @@ function nrExitTargeting() {
     }
     const bar = document.getElementById('nr-targeting-bar');
     const cancelBtn = document.getElementById('nr-cancel-btn');
-    if (bar) bar.style.display = 'none';
+    if (bar) bar.classList.remove('active');
     if (cancelBtn) cancelBtn.style.display = 'none';
 }
 
@@ -5479,6 +5559,8 @@ function goSetup() {
     document.getElementById('game').style.display = 'none';
     const _rorRow = document.getElementById('ingame-roster-row');
     if (_rorRow) _rorRow.style.display = 'none';
+    const _nrBar = document.getElementById('nr-targeting-bar');
+    if (_nrBar) { _nrBar.classList.remove('nr-mode', 'active'); }
     document.getElementById('online-lobby').classList.remove('show');
     document.getElementById('setup').style.display = 'flex';
     if (window.moveMusicPlayer) window.moveMusicPlayer('setup');
@@ -5653,42 +5735,42 @@ window.addEventListener('resize', () => {
         { name: 'Warhead', color: '#ff3355', label: 'Red', abilities: [
             { id: 'carpet_bomb',     name: 'Carpet Bomb',     desc: 'Destroys 1 orb from every enemy cell in a chosen row' },
             { id: 'airstrike',       name: 'Airstrike',       desc: 'Forces any cell to explode immediately in your colour' },
-            { id: 'detonation_wave', name: 'Detonation Wave', desc: 'Removes 1 orb from every near-critical enemy cell; converts survivors to your colour' },
+            { id: 'detonation_wave', name: 'Detonation Wave', desc: 'Near-critical enemy cells each lose 1 orb and convert to your colour' },
         ]},
         { name: 'Tsunami', color: '#2a7fff', label: 'Blue', abilities: [
             { id: 'undertow',   name: 'Undertow',   desc: 'Drains 1 orb from each enemy cell adjacent to yours and transfers it to your side' },
             { id: 'tidal_wave', name: 'Tidal Wave', desc: 'Converts all 1–2 orb enemy cells in a chosen column to your colour' },
-            { id: 'riptide',    name: 'Riptide',    desc: 'Any edge (row or column) that contains at least one of your cells is fully claimed — every cell on that entire edge converts, including corners shared with other triggered edges' },
+            { id: 'riptide',    name: 'Riptide',    desc: 'Any edge (row or column) that contains at least one of your cells is fully claimed' },
         ]},
         { name: 'Blight', color: '#1fd97a', label: 'Green', abilities: [
-            { id: 'overgrowth', name: 'Overgrowth', desc: 'In a 3×3 area: claims empty cells and buffs your own below critical (requires your cell inside)' },
+            { id: 'overgrowth', name: 'Overgrowth', desc: 'Claims empty cells and boosts your cells below critical in a 3×3 area around one of your cells' },
             { id: 'creep',      name: 'Creep',      desc: 'Claims all empty and 1-orb enemy cells adjacent to your cells' },
-            { id: 'pandemic',   name: 'Pandemic',   desc: 'All enemies lose 1 orb; all your safe cells gain 1. Static Field owners absorb it as +1 instead' },
+            { id: 'pandemic',   name: 'Pandemic',   desc: 'All enemies lose 1 orb; all your cells below critical gain 1' },
         ]},
         { name: 'Voltage', color: '#ffcc00', label: 'Yellow', abilities: [
-            { id: 'surge',        name: 'Surge',        desc: 'Passive for 3 rounds: a 5+ chain grants a free extra turn (up to 2 per turn). Does not cost your turn' },
-            { id: 'static_field', name: 'Static Field', desc: 'Your cells are immune to enemy chain capture this turn. Also absorbs Pandemic as +1 gain' },
+            { id: 'surge',        name: 'Surge',        desc: 'For 3 rounds, any chain of 5+ grants a free extra turn (max 2 per turn)' },
+            { id: 'static_field', name: 'Static Field', desc: 'Your cells cannot be captured by enemy chains this turn' },
             { id: 'blackout',     name: 'Blackout',     desc: "Skips a chosen opponent's next turn, activates Surge for 3 rounds, and grants you an immediate extra turn" },
         ]},
         { name: 'Phantom', color: '#cc44ff', label: 'Purple', abilities: [
-            { id: 'phantom_step', name: 'Phantom Step', desc: 'Teleports one of your cells to any empty cell on the board; triggers explosion check at destination' },
-            { id: 'swap',         name: 'Swap',         desc: 'Swaps the contents of any two cells on the board; triggers explosion checks on both' },
-            { id: 'void_rift',    name: 'Void Rift',    desc: '2×2 area: erases all enemy orbs and adds +2 to each of your cells inside; triggers explosion check' },
+            { id: 'phantom_step', name: 'Phantom Step', desc: 'Teleports one of your cells to any empty cell on the board' },
+            { id: 'swap',         name: 'Swap',         desc: 'Swaps the contents of any two cells on the board' },
+            { id: 'void_rift',    name: 'Void Rift',    desc: '2×2 area: erases all enemy orbs and adds +2 to each of your cells inside' },
         ]},
         { name: 'Cryo', color: '#00ddff', label: 'Cyan', abilities: [
-            { id: 'permafrost',    name: 'Permafrost',    desc: 'Freezes a target enemy cell and all its neighbours for 2 rounds. Your chains thaw and detonate them in your colour' },
+            { id: 'permafrost',    name: 'Permafrost',    desc: 'Freezes a target cell and its neighbours for 2 rounds. Frozen cells detonate in your colour when your chain reaches them' },
             { id: 'ice_wall',      name: 'Ice Wall',      desc: 'Your cells cannot be converted by enemy chains until your next turn' },
             { id: 'absolute_zero', name: 'Absolute Zero', desc: "Freezes every near-critical enemy cell for 3 rounds. When the freeze expires each cell shatters in Cryo's colour" },
         ]},
         { name: 'Napalm', color: '#ff6633', label: 'Orange', abilities: [
-            { id: 'ignite',   name: 'Ignite',   desc: 'Marks a cell to auto-explode in your colour: 2 rounds for your own, 1 round for enemy. Enemy chains detonate it immediately' },
+            { id: 'ignite',   name: 'Ignite',   desc: 'Marks a cell to explode in your colour: 2 rounds if yours, 1 if enemy\'s' },
             { id: 'ember',    name: 'Ember',    desc: 'Marks a 2×2 area of your cells as traps; each repels the next enemy chain that hits it, then the mark is consumed' },
-            { id: 'encircle', name: 'Encircle', desc: 'Scans all 8 directions. 4+ Napalm neighbours: convert + ignite 2 turns. 3: ignite 1 turn. 2: lose 2 orbs. 1: lose 1 orb. 0: untouched' },
+            { id: 'encircle', name: 'Encircle', desc: 'Counts Napalm neighbours in all 8 directions. 4+: convert + ignite 2 turns. 3: ignite 1 turn. 2: lose 2 orbs. 1: lose 1 orb.' },
         ]},
         { name: 'Venom', color: '#aaff33', label: 'Lime', abilities: [
             { id: 'corrode', name: 'Corrode', desc: 'Reduces every enemy cell in a 2×2 area to 1 orb' },
             { id: 'infect',  name: 'Infect',  desc: "Marks an enemy cell; when it explodes the spread converts to your colour instead of the cell's owner" },
-            { id: 'decay',   name: 'Decay',   desc: 'Converts a target to 2 of your orbs then BFS-spreads to every connected enemy: 1-orb cells convert, others lose 1 orb. Never stops' },
+            { id: 'decay',   name: 'Decay',   desc: 'Pick a cell, then spread to every connected enemy: 1-orb cells convert, others lose 1 orb.' },
         ]},
     ];
 

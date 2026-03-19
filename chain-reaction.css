@@ -609,6 +609,14 @@ input, textarea, select,
     min-height: 16px;
     text-align: center;
     transition: all .2s;
+    display: none;
+}
+.online-turn-hint.online-mode {
+    display: block;
+    visibility: hidden;
+}
+.online-turn-hint.online-mode.visible {
+    visibility: visible;
 }
 
 .online-turn-hint.your-turn {
@@ -624,6 +632,18 @@ input, textarea, select,
     border-radius: 3px;
     overflow: hidden;
     position: relative;
+    display: none;
+}
+/* Reserve space in online mode so showing/hiding never shifts layout */
+.turn-timer.online-mode {
+    display: block;
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+.turn-timer.online-mode.visible {
+    visibility: visible;
+    opacity: 1;
 }
 
 #turn-timer-bar {
@@ -2413,17 +2433,10 @@ body.skin-numbered .orb-count-badge {
 /* ── Character / ability label row ── */
 .nr-char-row {
     display: flex;
-    justify-content: space-between;
+    justify-content: center;
     align-items: center;
     margin-top: 3px;
     gap: 4px;
-}
-.nr-char-name {
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 9px;
-    color: var(--dim);
-    letter-spacing: .04em;
-    text-transform: uppercase;
 }
 .nr-ability-name {
     font-family: 'Share Tech Mono', monospace;
@@ -2433,7 +2446,38 @@ body.skin-numbered .orb-count-badge {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 72px;
+    max-width: 100%;
+    text-align: center;
+}
+/* Red Cancel state — card gets pulsing red border + full-card overlay text */
+.pcard.nr-cancelling {
+    border-color: #ff3355 !important;
+    animation: nr-cancel-pulse 1s ease-in-out infinite !important;
+    position: relative;
+}
+@keyframes nr-cancel-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 #ff335500; border-color: #ff335588; }
+    50%       { box-shadow: 0 0 0 5px #ff335500; border-color: #ff3355; }
+}
+.pcard.nr-cancelling::after {
+    content: 'Cancel\a Ability';
+    white-space: pre;
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: inherit;
+    background: rgba(20, 4, 8, 0.82);
+    color: #ff3355;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 7.5px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-align: center;
+    text-transform: uppercase;
+    pointer-events: none;
+    z-index: 5;
 }
 
 /* ── Ready state: pulsing glow on card ── */
@@ -2482,7 +2526,7 @@ body.skin-numbered .orb-count-badge {
 
 /* ── Targeting instruction bar ── */
 #nr-targeting-bar {
-    display: flex;
+    display: none;
     align-items: center;
     justify-content: center;
     gap: 10px;
@@ -2490,6 +2534,19 @@ body.skin-numbered .orb-count-badge {
     background: rgba(255,255,255,0.07);
     border-radius: 6px;
     margin: 2px 0;
+    pointer-events: none;
+}
+/* In nuclear mode the bar always reserves its space so layout never shifts */
+#nr-targeting-bar.nr-mode {
+    display: flex;
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+#nr-targeting-bar.active {
+    visibility: visible;
+    opacity: 1;
+    pointer-events: all;
 }
 #nr-targeting-label {
     font-family: 'Share Tech Mono', monospace;
@@ -3606,3 +3663,4 @@ body.colorblind .cell.near-crit::after {
     opacity: 1;
     transform: rotate(45deg) scale(1.15);
 }
+
