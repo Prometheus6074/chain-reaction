@@ -40,7 +40,7 @@ const ballModes = new Array(8).fill(0);
 const ballColors = [...ALL_COLORS]; // per-slot chosen color
 const ballOrder = [];
 
-let cfg = { rows: 9, cols: 9 };
+let cfg = { rows: 8, cols: 8 };
 let S = {};
 let history = [];
 
@@ -129,8 +129,8 @@ let isHost = false;
 let roomCode = null;
 let roomRef = null;
 let onlineListeners = [];   // { ref, listener, event }
-let onlineCfgRows = 9;
-let onlineCfgCols = 9;
+let onlineCfgRows = 8;
+let onlineCfgCols = 8;
 let onlineNumPlayers = 2;
 let myUsername = sessionStorage.getItem('cr_username') || localStorage.getItem('cr_username') || '';
 let _onlineTurnTimerInterval = null;
@@ -383,7 +383,7 @@ function buildOlCreateUI() {
     if (!gRow.children.length) {
         [[6, 6, '6×6'], [7, 7, '7×7'], [8, 8, '8×8'], [9, 9, '9×9'], [10, 10, '10×10']].forEach(([r, c, l], idx) => {
             const b = document.createElement('button');
-            b.className = 'pill' + (idx === 3 ? ' active' : '');
+            b.className = 'pill' + (idx === 2 ? ' active' : '');
             b.textContent = l;
             b.onclick = () => {
                 onlineCfgRows = r; onlineCfgCols = c;
@@ -391,7 +391,7 @@ function buildOlCreateUI() {
             };
             gRow.appendChild(b);
         });
-        onlineCfgRows = 9; onlineCfgCols = 9;
+        onlineCfgRows = 8; onlineCfgCols = 8;
     }
 }
 
@@ -5681,6 +5681,8 @@ function goSetup() {
         const gb = document.getElementById('grid-btns');
         if (gb) { gb.innerHTML = ''; _gridBtnsOriginalNodes.forEach(n => gb.appendChild(n)); }
     }
+    cfg = { rows: 8, cols: 8 };
+    syncGridBtns();
     testMode = false;
     history = [];
     hideCombo(true);
