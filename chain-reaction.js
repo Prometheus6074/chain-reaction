@@ -5598,10 +5598,22 @@ function goSetup() {
     const nmToggle = document.getElementById('nuclear-mode-toggle');
     if (nmToggle) nmToggle.classList.remove('on');
     timedMode = false;
+    timedSeconds = 60;
     const tmToggle = document.getElementById('timed-mode-toggle');
     if (tmToggle) tmToggle.classList.remove('on');
     const timedRow = document.getElementById('timed-seconds-row');
     if (timedRow) timedRow.style.display = 'none';
+    // Reset animated start-btn-row button states
+    const startRow = document.getElementById('start-btn-row');
+    if (startRow) startRow.classList.remove('sandbox-open', 'timed-open');
+    const sandboxBtn = document.getElementById('sandbox-btn');
+    if (sandboxBtn) sandboxBtn.classList.remove('sandbox-visible');
+    const timedBtn = document.getElementById('timed-btn');
+    if (timedBtn) {
+        timedBtn.classList.remove('timed-visible');
+        const lbl = document.getElementById('timed-btn-label');
+        if (lbl) lbl.textContent = '1 min';
+    }
     testMode = false;
     history = [];
     hideCombo(true);

@@ -62,6 +62,7 @@ input, textarea, select,
     gap: 6px;
 }
 
+
 .logo h1 {
     font-family: 'Orbitron', sans-serif;
     font-size: clamp(26px, 5.5vw, 52px);
