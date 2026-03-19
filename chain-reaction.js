@@ -207,7 +207,9 @@ function generateRoomCode() {
 
 function toggleBall(i) {
     const prev = ballModes[i];
-    ballModes[i] = (prev + 1) % 4;
+    // In nuclear mode: only player ↔ disabled (AI not yet supported)
+    const max = nuclearMode ? 2 : 4;
+    ballModes[i] = (prev + 1) % max;
     if (prev === 0) ballOrder.push(i);
     else if (ballModes[i] === 0) { const idx = ballOrder.indexOf(i); if (idx !== -1) ballOrder.splice(idx, 1); }
     syncBallGrid();
@@ -224,10 +226,13 @@ function syncBallGrid() {
         slot.className = 'ball-slot ' + (mode === 1 ? 'mode-player' : mode === 2 ? 'mode-ai' : mode === 3 ? 'mode-hard-ai' : '');
         slot.style.setProperty('--bc',   col);
         slot.style.setProperty('--bc66', col + '66');
-        if (mode === 1) { num.textContent = pos + 1; label.textContent = `P${pos + 1}`; }
-        else if (mode === 2) { num.textContent = 'AI'; label.textContent = 'AI'; }
-        else if (mode === 3) { num.textContent = 'H'; label.textContent = 'Hard AI'; }
-        else { num.textContent = ''; label.textContent = ALL_NAMES[i]; }
+        // In nuclear mode use character name, otherwise color name
+        const charIdx  = ALL_COLORS.indexOf(col);
+        const baseName = nuclearMode && charIdx >= 0 ? NR_CHARS[charIdx].name : ALL_NAMES[i];
+        if (mode === 1) { num.textContent = pos + 1; label.textContent = baseName; }
+        else if (mode === 2) { num.textContent = 'AI'; label.textContent = baseName; }
+        else if (mode === 3) { num.textContent = 'H'; label.textContent = baseName; }
+        else { num.textContent = ''; label.textContent = baseName; }
     });
     document.getElementById('start-btn').disabled = ballOrder.length < 2;
 }
@@ -5009,12 +5014,23 @@ async function nrProcessTurnStartCells(session, isNewRound) {
 /* ── Setup toggle ── */
 function setNuclearMode(on) {
     nuclearMode = on;
+    // If turning on, reset any AI slots (modes 2 & 3) to disabled (0)
+    if (on) {
+        for (let i = 0; i < ballModes.length; i++) {
+            if (ballModes[i] === 2 || ballModes[i] === 3) {
+                ballModes[i] = 0;
+                const idx = ballOrder.indexOf(i);
+                if (idx !== -1) ballOrder.splice(idx, 1);
+            }
+        }
+    }
     const sandboxBtn = document.getElementById('sandbox-btn');
     if (sandboxBtn) sandboxBtn.classList.toggle('sandbox-visible', on);
     const startRow = document.getElementById('start-btn-row');
     if (startRow) startRow.classList.toggle('sandbox-open', on);
     const nrBar = document.getElementById('nr-targeting-bar');
     if (nrBar) nrBar.classList.toggle('nr-mode', !!on);
+    syncBallGrid();
 }
 
 /* ══════════════════════════════════════════════════════════════════
