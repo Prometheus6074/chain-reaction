@@ -3763,3 +3763,73 @@ body.colorblind .cell.near-crit::after {
     transform: rotate(45deg) scale(1.15);
 }
 
+
+/* ══════════════════════════════════════════════════════════════════
+   CUSTOM GRID SPINNER (inline, horizontal — sits where grid-btns are)
+   ══════════════════════════════════════════════════════════════════ */
+@keyframes gridBtnsOut {
+    from { opacity: 1; transform: scale(1); }
+    to   { opacity: 0; transform: scale(0.92); }
+}
+@keyframes gridBtnsIn {
+    from { opacity: 0; transform: scale(0.92); }
+    to   { opacity: 1; transform: scale(1); }
+}
+#grid-btns.grid-btns-exit {
+    animation: gridBtnsOut 140ms cubic-bezier(0.4, 0, 1, 1) forwards;
+    pointer-events: none;
+}
+#grid-btns.grid-btns-enter {
+    animation: gridBtnsIn 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.custom-grid-row-inline {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    flex-wrap: nowrap;
+    height: 35px;
+    width: 100%;
+    box-sizing: border-box;
+}
+.custom-grid-row-inline span#custom-rows-val,
+.custom-grid-row-inline span#custom-cols-val {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    min-width: 22px;
+    text-align: center;
+    line-height: 1;
+}
+.custom-grid-sep {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 12px;
+    color: var(--dim);
+    font-weight: 700;
+    padding: 0 2px;
+}
+.custom-grid-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    color: var(--dim);
+    cursor: pointer;
+    width: 32px;
+    height: 33px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color .15s, color .15s, background .15s;
+    padding: 0;
+    flex-shrink: 0;
+}
+.custom-grid-btn:hover {
+    border-color: #cc44ff66;
+    color: #cc44ff;
+    background: #cc44ff0d;
+}
+.custom-grid-btn:active {
+    background: #cc44ff1a;
+}

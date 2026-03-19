@@ -73,6 +73,7 @@
     <div>
       <span class="field-label">Grid Size</span>
       <div class="btn-row" id="grid-btns"></div>
+
     </div>
     <!-- Game Modes -->
     <div class="setup-modes">
@@ -82,6 +83,14 @@
           Timed Mode
         </label>
         <button class="s-toggle" id="timed-mode-toggle" onclick="this.classList.toggle('on'); setTimedMode(this.classList.contains('on'))" aria-label="Toggle timed mode"></button>
+      </div>
+
+      <div class="mode-row">
+        <label class="mode-label">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 12h18"/><path d="M12 3v18"/></svg>
+          Custom Grid
+        </label>
+        <button class="s-toggle" id="custom-grid-toggle" onclick="this.classList.toggle('on'); setCustomGrid(this.classList.contains('on'))" aria-label="Toggle custom grid"></button>
       </div>
 
       <div class="mode-row">

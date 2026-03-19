@@ -234,8 +234,67 @@ function syncBallGrid() {
 
 
 function syncGridBtns() {
-    [6, 7, 8, 9, 10].forEach((sz, i) =>
-        document.querySelectorAll('#grid-btns .pill')[i].classList.toggle('active', sz === cfg.rows));
+    const customOn = document.getElementById('custom-grid-toggle')?.classList.contains('on');
+    [6, 7, 8, 9, 10].forEach((sz, i) => {
+        const pill = document.querySelectorAll('#grid-btns .pill')[i];
+        if (pill) pill.classList.toggle('active', !customOn && sz === cfg.rows);
+    });
+}
+
+let customGridMode = false;
+// Store original pill DOM nodes so event handlers survive the swap
+let _gridBtnsOriginalNodes = null;
+
+const _CHEVRON_L = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>`;
+const _CHEVRON_R = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
+
+function _buildCustomGridHTML() {
+    const r = cfg.rows, c = cfg.cols;
+    return `<div class="custom-grid-row-inline">` +
+        `<button class="custom-grid-btn" onclick="adjustCustomGrid('rows',-1)" aria-label="Decrease rows">${_CHEVRON_L}</button>` +
+        `<span id="custom-rows-val">${r}</span>` +
+        `<button class="custom-grid-btn" onclick="adjustCustomGrid('rows',1)" aria-label="Increase rows">${_CHEVRON_R}</button>` +
+        `<span class="custom-grid-sep">×</span>` +
+        `<button class="custom-grid-btn" onclick="adjustCustomGrid('cols',-1)" aria-label="Decrease cols">${_CHEVRON_L}</button>` +
+        `<span id="custom-cols-val">${c}</span>` +
+        `<button class="custom-grid-btn" onclick="adjustCustomGrid('cols',1)" aria-label="Increase cols">${_CHEVRON_R}</button>` +
+        `</div>`;
+}
+
+function setCustomGrid(on) {
+    customGridMode = on;
+    const gb = document.getElementById('grid-btns');
+    if (!gb) return;
+    gb.classList.add('grid-btns-exit');
+    setTimeout(() => {
+        gb.classList.remove('grid-btns-exit');
+        if (on) {
+            // Save live nodes before clearing
+            if (!_gridBtnsOriginalNodes) _gridBtnsOriginalNodes = Array.from(gb.childNodes);
+            cfg.rows = 8; cfg.cols = 8;
+            gb.innerHTML = _buildCustomGridHTML();
+        } else {
+            // Re-append saved nodes to restore onclick handlers
+            gb.innerHTML = '';
+            if (_gridBtnsOriginalNodes) _gridBtnsOriginalNodes.forEach(n => gb.appendChild(n));
+            syncGridBtns();
+        }
+        gb.classList.add('grid-btns-enter');
+        setTimeout(() => gb.classList.remove('grid-btns-enter'), 220);
+    }, 140);
+}
+
+function adjustCustomGrid(axis, delta) {
+    const MIN = 4, MAX = 16;
+    if (axis === 'rows') {
+        cfg.rows = Math.max(MIN, Math.min(MAX, cfg.rows + delta));
+        const el = document.getElementById('custom-rows-val');
+        if (el) el.textContent = cfg.rows;
+    } else {
+        cfg.cols = Math.max(MIN, Math.min(MAX, cfg.cols + delta));
+        const el = document.getElementById('custom-cols-val');
+        if (el) el.textContent = cfg.cols;
+    }
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -5613,6 +5672,14 @@ function goSetup() {
         timedBtn.classList.remove('timed-visible');
         const lbl = document.getElementById('timed-btn-label');
         if (lbl) lbl.textContent = '1 min';
+    }
+    // Reset custom grid
+    customGridMode = false;
+    const cgToggle = document.getElementById('custom-grid-toggle');
+    if (cgToggle) cgToggle.classList.remove('on');
+    if (_gridBtnsOriginalNodes) {
+        const gb = document.getElementById('grid-btns');
+        if (gb) { gb.innerHTML = ''; _gridBtnsOriginalNodes.forEach(n => gb.appendChild(n)); }
     }
     testMode = false;
     history = [];
