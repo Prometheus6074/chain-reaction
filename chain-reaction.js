@@ -5031,6 +5031,71 @@ function setNuclearMode(on) {
     const nrBar = document.getElementById('nr-targeting-bar');
     if (nrBar) nrBar.classList.toggle('nr-mode', !!on);
     syncBallGrid();
+
+    // Scramble title first word + stagger ball labels
+    const gen = ++_nrToggleGen;
+    const titleEl = document.querySelector('#setup .logo h1');
+    if (titleEl) _nrScrambleTitle(titleEl, on ? 'Nuclear Reaction' : 'Chain Reaction');
+    ALL_COLORS.forEach((_, i) => {
+        const labelEl = document.getElementById(`bl${i}`);
+        if (!labelEl) return;
+        const charIdx = ALL_COLORS.indexOf(ballColors[i]);
+        const newName = on
+            ? (charIdx >= 0 ? NR_CHARS[charIdx].name : ALL_NAMES[i])
+            : ALL_NAMES[i];
+        setTimeout(() => {
+            if (gen !== _nrToggleGen) return;
+            _nrScrambleLabel(labelEl, newName);
+        }, i * 30);
+    });
+}
+
+let _nrToggleGen = 0;
+
+/* Scramble only the first word ("Chain"/"Nuclear"); "Reaction" stays static */
+function _nrScrambleTitle(el, finalText) {
+    const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%';
+    const STEPS = 10, STEP_MS = 40;
+    const spaceIdx = finalText.indexOf(' ');
+    if (spaceIdx < 0) { el.textContent = finalText; return; }
+    const firstWord = finalText.slice(0, spaceIdx);
+    const suffix    = finalText.slice(spaceIdx);
+    let step = 0;
+    const interval = setInterval(() => {
+        step++;
+        if (step >= STEPS) {
+            el.textContent = finalText;
+            clearInterval(interval);
+            return;
+        }
+        const progress = step / STEPS;
+        const scrambled = firstWord.split('').map((ch, i) => {
+            if (i / firstWord.length < progress) return ch;
+            return CHARS[Math.floor(Math.random() * CHARS.length)];
+        }).join('');
+        el.textContent = scrambled + suffix;
+    }, STEP_MS);
+}
+
+/* Scramble a short label — used for ball slot names on NR toggle */
+function _nrScrambleLabel(el, finalText) {
+    const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    const STEPS = 8, STEP_MS = 35;
+    let step = 0;
+    const interval = setInterval(() => {
+        step++;
+        if (step >= STEPS) {
+            el.textContent = finalText;
+            clearInterval(interval);
+            return;
+        }
+        const progress = step / STEPS;
+        el.textContent = finalText.split('').map((ch, i) => {
+            if (ch === ' ') return ' ';
+            if (i / finalText.length < progress) return ch;
+            return CHARS[Math.floor(Math.random() * CHARS.length)];
+        }).join('');
+    }, STEP_MS);
 }
 
 /* ══════════════════════════════════════════════════════════════════
